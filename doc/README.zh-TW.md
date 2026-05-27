@@ -169,6 +169,39 @@ make run -- -t cli sdkmanager --cli \
 
 > 其他裝置請替換 `--target`：`JETSON_ORIN_NX_TARGETS`（Orin NX）或 `JETSON_ORIN_NANO_TARGETS`（Orin Nano）。JetPack 版本替換 `--version`。
 
+### CLI 參數一覽
+
+| 參數 | 值 | 說明 |
+|------|---|------|
+| `--cli` | | 啟用 CLI 模式 |
+| `--action` | `install` / `uninstall` / `downloadonly` | 執行的動作 |
+| `--login-type` | `devzone` / `nvonline` / `offline` | 認證方式 |
+| `--product` | `Jetson` | 目標產品系列 |
+| `--version` | 例如 `6.2` | JetPack 版本 |
+| `--target-os` | `Linux` | 目標 OS |
+| `--target` | 見下表 | 目標板 |
+| `--flash` | | 燒錄裝置（省略則跳過燒錄） |
+| `--host` | | 同時安裝 host 元件 |
+| `--select` | `section_or_group` | 加入安裝清單（可重複） |
+| `--deselect` | `section_or_group` | 從安裝清單移除（可重複） |
+| `--additional-sdk` | `sdk_title` | 安裝額外 SDK（例如 DeepStream） |
+| `--download-only` | | 僅下載不安裝 |
+| `--download-folder` | 路徑 | 自訂下載目錄 |
+| `--target-image-folder` | 路徑 | 自訂 SDK 安裝目錄 |
+| `--license` | `accept` / `reject` | 自動接受授權 |
+| `--stay-logged-in` | `true` / `false` | 持久化登入 session |
+| `--exit-on-finish` | | 完成後自動退出 |
+| `--auto` | | 所有提示自動以預設值完成 |
+| `--query` | `interactive` / `non-interactive` | 列出可選項目 |
+| `--show-all-versions` | | 顯示所有可用版本（含非主要版本） |
+| `--archived-versions` | | 僅顯示已封存的 SDK 版本 |
+| `--list-connected` | `all` / `Jetson` | 列出已連接的裝置 |
+| `--usb-port` | 例如 `1-2` | 指定 USB port（多板連接時） |
+| `--response-file` | 路徑 | 從 response file 執行（全自動） |
+| `--export-response-file` | 路徑 | 匯出目前選擇為 response file |
+| `--export-logs` | 路徑 | 匯出 log 到指定目錄 |
+| `--collect-usage-data` | `enable` / `disable` | 使用資料收集 |
+
 ### 支援的 Jetson Target
 
 | Target 參數 | 裝置 |

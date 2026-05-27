@@ -169,6 +169,39 @@ make run -- -t cli sdkmanager --cli \
 
 > Replace `--target` with `JETSON_ORIN_NX_TARGETS` or `JETSON_ORIN_NANO_TARGETS` for other devices. Replace `--version` with the desired JetPack version.
 
+### CLI Parameter Reference
+
+| Parameter | Values | Description |
+|-----------|--------|-------------|
+| `--cli` | | Enable CLI mode |
+| `--action` | `install` / `uninstall` / `downloadonly` | Action to perform |
+| `--login-type` | `devzone` / `nvonline` / `offline` | Authentication method |
+| `--product` | `Jetson` | Target product family |
+| `--version` | e.g. `6.2` | JetPack version |
+| `--target-os` | `Linux` | Target OS |
+| `--target` | see table below | Target board |
+| `--flash` | | Flash the device (omit to skip flash) |
+| `--host` | | Also install host components |
+| `--select` | `section_or_group` | Add component to install list (repeatable) |
+| `--deselect` | `section_or_group` | Remove component from install list (repeatable) |
+| `--additional-sdk` | `sdk_title` | Install additional SDKs (e.g. DeepStream) |
+| `--download-only` | | Download without installing |
+| `--download-folder` | path | Custom download folder |
+| `--target-image-folder` | path | Custom SDK install folder |
+| `--license` | `accept` / `reject` | Accept license automatically |
+| `--stay-logged-in` | `true` / `false` | Persist login session |
+| `--exit-on-finish` | | Exit when done |
+| `--auto` | | Auto-complete all prompts with defaults |
+| `--query` | `interactive` / `non-interactive` | List available options |
+| `--show-all-versions` | | Show all available versions (including non-primary) |
+| `--archived-versions` | | Show only archived SDK versions |
+| `--list-connected` | `all` / `Jetson` | List connected devices |
+| `--usb-port` | e.g. `1-2` | Select USB port (multiple boards) |
+| `--response-file` | path | Run from a response file (fully unattended) |
+| `--export-response-file` | path | Export current selections as response file |
+| `--export-logs` | path | Export logs to folder |
+| `--collect-usage-data` | `enable` / `disable` | Usage data collection |
+
 ### Supported Jetson Targets
 
 | Target ARG | Device |
