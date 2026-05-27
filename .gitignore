@@ -10,3 +10,5 @@ coverage/
 
 # SDK Manager local data (login session + download cache)
 data/
+# managed by template: [logging] local_path (do not remove)
+/log/

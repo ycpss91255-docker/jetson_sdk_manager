@@ -21,3 +21,12 @@ setup() {
   run sdkmanager --ver
   assert_success
 }
+
+@test "lbzip2 is installed" {
+  assert_cmd_installed lbzip2
+}
+
+@test "root can use sudo" {
+  run sudo -n su -c "sudo -n true" root
+  assert_success
+}

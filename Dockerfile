@@ -122,7 +122,8 @@ RUN . /etc/os-release && \
     apt-get update && \
     apt-get install -y --no-install-recommends sdkmanager lbzip2 && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    grep -q '^root' /etc/sudoers || echo "root ALL=(ALL:ALL) ALL" >> /etc/sudoers
 
 COPY --chmod=0755 "./${ENTRYPOINT_FILE}" "/entrypoint.sh"
 # Host-side log tee helper (#328 / #368). Source from
