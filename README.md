@@ -32,12 +32,13 @@ make build && make run -- -t cli
 
 - **Host OS**: x86_64 Linux
 - **Docker Engine** >= v20.10.6
-- **Host packages** (required for flashing ARM targets from x86 host):
+- **QEMU binfmt** (required for flashing ARM targets from x86 host):
 
   ```bash
-  sudo apt-get install qemu-user-static binfmt-support
-  sudo update-binfmts --enable
+  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
   ```
+
+  > Run once per host boot. Registers ARM64 binary translation in the kernel via Docker — no host packages needed.
 
 - **USB auto-suspend**: must be disabled on the USB port connected to the Jetson, or flashing may hang
 
@@ -302,4 +303,90 @@ jetson_sdk_manager/
 ├── .github/workflows/
 │   └── main.yaml                # CI/CD
 └── .gitignore
+```
+
+## Troubleshooting
+
+### `chroot: failed to run command 'dpkg': Exec format error`
+
+The host kernel cannot execute ARM64 binaries. Register the QEMU binfmt interpreter:
+
+```bash
+docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+```
+
+This must be run once per host boot.
+
+### `mknod: .../rootfs/dev/random: File exists`
+
+A previous failed flash left a partial rootfs in `data/nvidia_sdk/`. SDK Manager's install script is not idempotent — it cannot overwrite existing device nodes. Clean the rootfs and retry:
+
+```bash
+sudo rm -rf data/nvidia_sdk/JetPack_*_TARGETS/Linux_for_Tegra/rootfs/
+```
+
+### `Could not detect a board` / Jetson not detected
+
+SDK Manager cannot find the Jetson device. Check the following:
+
+1. **Recovery mode** — the Jetson must be in Force Recovery mode before connecting:
+   - Disconnect power
+   - Connect USB-C cable between the Jetson **front panel** (button side) and the host
+   - Hold the **REC (middle) button**
+   - Connect power (or press Power button)
+   - Wait 2 seconds, then release REC
+
+2. **Verify recovery mode on host**:
+
+   ```bash
+   lsusb | grep 0955
+   ```
+
+   | Output | Status |
+   |--------|--------|
+   | `0955:7023 NVIDIA Corp. APX` | Recovery mode (AGX Orin) |
+   | `0955:7223 NVIDIA Corp. APX` | Recovery mode (Orin NX/Nano) |
+   | `0955:xxxx` (other product ID) | Normal mode — re-enter recovery |
+   | (no output) | Not detected — check cable/port |
+
+   > Note: Recovery mode uses USB 2.0 (480 Mbps) — this is normal. The USB 3.0 controller is not active in APX mode.
+
+   If nothing appears:
+
+   - **USB-C cable** — some cables are charge-only with no data lines. Use a data-capable cable
+   - **USB port** — connect directly to the host, not through a USB hub (hubs may not support USB device mode)
+   - **Wrong port** — use the front panel USB-C (button side), not the rear USB-C (power side)
+
+### `The connected Jetson device is not ready for flash`
+
+USB connection instability. Try the following in order:
+
+1. Click **Reset USB Controller** in the SDK Manager dialog
+2. Unplug USB-C → unplug Jetson power → replug USB-C → replug power → re-enter recovery mode
+3. Try a different USB-C cable
+4. Try a different USB port on the host (avoid hubs)
+5. Reboot the host machine
+
+### `tar: lbzip2: Cannot exec: No such file or directory`
+
+The container is missing `lbzip2`. Rebuild with the latest Dockerfile:
+
+```bash
+git pull && make build -- -t gui
+```
+
+### `root is not in the sudoers file`
+
+The container image is missing the root sudoers rule. Rebuild with the latest Dockerfile:
+
+```bash
+git pull && make build -- -t gui
+```
+
+### `/bin/sh: 1: file: not found`
+
+The container is missing the `file` command. Rebuild with the latest Dockerfile:
+
+```bash
+git pull && make build -- -t gui
 ```

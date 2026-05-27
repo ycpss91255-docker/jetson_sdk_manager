@@ -30,3 +30,15 @@ setup() {
   run sudo -n su -c "sudo -n true" root
   assert_success
 }
+
+@test "usbutils is installed" {
+  assert_cmd_installed lsusb
+}
+
+@test "udevadm is installed" {
+  assert_cmd_installed udevadm
+}
+
+@test "file command is installed" {
+  assert_cmd_installed file
+}
