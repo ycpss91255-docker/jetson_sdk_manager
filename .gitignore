@@ -9,4 +9,4 @@ coverage/
 .docker.xauth
 
 # SDK Manager local data (login session + download cache)
-.data/
+data/

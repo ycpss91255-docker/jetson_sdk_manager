@@ -64,12 +64,12 @@ make stop                        # コンテナを停止
 
 ## 永続化データ
 
-SDK Manager のダウンロードファイルとログインセッションは `.data/` に永続化（gitignore 済み）：
+SDK Manager のダウンロードファイルとログインセッションは `data/` に永続化（gitignore 済み）：
 
 | Host パス | コンテナパス | 用途 |
 |-----------|------------|------|
-| `.data/nvsdkm/` | `${HOME}/.nvsdkm` | ログインセッションキャッシュ |
-| `.data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | SDK コンポーネントダウンロード（~10-20 GB） |
+| `data/nvsdkm/` | `${HOME}/.nvsdkm` | ログインセッションキャッシュ |
+| `data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | SDK コンポーネントダウンロード（~10-20 GB） |
 
 ## Smoke Tests
 

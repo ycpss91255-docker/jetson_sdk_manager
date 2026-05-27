@@ -1,0 +1,8 @@
+# Placeholder so this directory exists in git. The Dockerfile's
+# layered COPY (template#254) reads .base/config/ first then
+# overlays <repo>/config/ on top. Drop files under <repo>/config/
+# only when you want to override a specific template default
+# (e.g. <repo>/config/shell/bashrc to override template's bashrc,
+# or <repo>/config/shell/bashrc.d/your-snippet.sh to add a drop-in).
+# Files NOT placed here keep flowing through from .base/config/
+# on every build.

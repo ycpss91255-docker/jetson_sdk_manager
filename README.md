@@ -52,10 +52,10 @@ make build && make run -- -t cli
 
 ## Quick Start
 
-> **First-time only:** run `./script/init_data_dirs.sh` **before** `make run`. Skipping it lets the Docker daemon `mkdir` the `.data/` mount points as **root**, and the container's non-root user will then fail to access them.
+> **First-time only:** run `./script/init_data_dirs.sh` **before** `make run`. Skipping it lets the Docker daemon `mkdir` the `data/` mount points as **root**, and the container's non-root user will then fail to access them.
 
 ```bash
-./script/init_data_dirs.sh        # first time only — creates .data/{nvsdkm,downloads}
+./script/init_data_dirs.sh        # first time only — creates data/{nvsdkm,downloads}
 make build -- -t cli
 
 # Put Jetson into recovery mode (hold REC button + power cycle)
@@ -151,13 +151,13 @@ make stop
 
 ## Persistent Data
 
-SDK Manager downloads and login sessions are persisted in `.data/` (gitignored):
+SDK Manager downloads and login sessions are persisted in `data/` (gitignored):
 
 | Host path | Container path | Purpose |
 |-----------|----------------|---------|
-| `.data/nvsdkm/` | `${HOME}/.nvsdkm` | Login session cache (login once, reuse) |
-| `.data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | SDK component downloads (~11 GB) |
-| `.data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK install folder (~31 GB) |
+| `data/nvsdkm/` | `${HOME}/.nvsdkm` | Login session cache (login once, reuse) |
+| `data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | SDK component downloads (~11 GB) |
+| `data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK install folder (~31 GB) |
 
 First-time login creates the session; subsequent runs reuse it via `--stay-logged-in true`.
 
@@ -198,7 +198,7 @@ jetson_sdk_manager/
 ├── Dockerfile                   # Multi-stage: sys → devel-base → devel → cli / gui
 ├── Makefile -> .base/script/docker/Makefile
 ├── .base/                       # Shared template (git subtree)
-├── .data/                       # Persistent SDK Manager data (gitignored)
+├── data/                       # Persistent SDK Manager data (gitignored)
 │   ├── nvsdkm/                  #   Login session cache
 │   └── downloads/               #   SDK component downloads
 ├── config/

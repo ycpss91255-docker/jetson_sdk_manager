@@ -64,12 +64,12 @@ make stop                        # 停止容器
 
 ## 持久化数据
 
-SDK Manager 下载文件和登录 session 持久化在 `.data/`（已 gitignore）：
+SDK Manager 下载文件和登录 session 持久化在 `data/`（已 gitignore）：
 
 | Host 路径 | 容器路径 | 用途 |
 |-----------|---------|------|
-| `.data/nvsdkm/` | `${HOME}/.nvsdkm` | 登录 session 缓存 |
-| `.data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | SDK 组件下载（~10-20 GB） |
+| `data/nvsdkm/` | `${HOME}/.nvsdkm` | 登录 session 缓存 |
+| `data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | SDK 组件下载（~10-20 GB） |
 
 ## Smoke Tests
 
