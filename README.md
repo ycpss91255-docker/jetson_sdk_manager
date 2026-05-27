@@ -101,25 +101,6 @@ make build test                  # Build with lint + smoke tests
 
 Two variants, picked by stage target:
 
-**CLI mode** (headless, recommended):
-
-```bash
-# Interactive CLI — SDK Manager prompts for selections
-make run -- -t cli
-
-# Fully automated flash example (Jetson AGX Orin)
-make run -- -t cli sdkmanager --cli \
-  --action install \
-  --login-type devzone \
-  --product Jetson \
-  --target-os Linux \
-  --version 6.1 \
-  --target JETSON_AGX_ORIN_TARGETS \
-  --flash \
-  --license accept \
-  --exit-on-finish
-```
-
 **GUI mode** (requires X11 display):
 
 ```bash
@@ -127,6 +108,66 @@ make run -- -t gui               # Launches SDK Manager GUI
 ```
 
 > GUI mode requires the host to have a running X11 session. The base template's `setup.sh` auto-detects `$DISPLAY` and configures X11 socket forwarding + XAUTHORITY.
+
+**CLI mode** (headless):
+
+```bash
+# Interactive CLI — SDK Manager prompts for selections
+make run -- -t cli
+```
+
+### CLI Examples
+
+**1. Download only** — download JetPack components without installing:
+
+```bash
+make run -- -t cli sdkmanager --cli \
+  --action install \
+  --login-type devzone \
+  --product Jetson \
+  --target-os Linux \
+  --version 6.2 \
+  --target JETSON_AGX_ORIN_TARGETS \
+  --license accept \
+  --stay-logged-in true \
+  --download-only \
+  --exit-on-finish
+```
+
+**2. Install (flash)** — if already downloaded, skips download and flashes directly:
+
+```bash
+make run -- -t cli sdkmanager --cli \
+  --action install \
+  --login-type devzone \
+  --product Jetson \
+  --target-os Linux \
+  --version 6.2 \
+  --target JETSON_AGX_ORIN_TARGETS \
+  --flash \
+  --license accept \
+  --stay-logged-in true \
+  --exit-on-finish
+```
+
+**3. Full automated** — download + flash + install SDK components in one go:
+
+```bash
+make run -- -t cli sdkmanager --cli \
+  --action install \
+  --login-type devzone \
+  --product Jetson \
+  --target-os Linux \
+  --version 6.2 \
+  --target JETSON_AGX_ORIN_TARGETS \
+  --flash \
+  --license accept \
+  --stay-logged-in true \
+  --collect-usage-data enable \
+  --exit-on-finish
+```
+
+> Replace `--target` with `JETSON_ORIN_NX_TARGETS` or `JETSON_ORIN_NANO_TARGETS` for other devices. Replace `--version` with the desired JetPack version.
 
 ### Supported Jetson Targets
 

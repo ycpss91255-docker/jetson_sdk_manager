@@ -101,25 +101,6 @@ make build test                  # 建置含 lint + smoke test
 
 依 stage target 分兩種 variant：
 
-**CLI 模式**（無頭模式，建議使用）：
-
-```bash
-# 互動式 CLI — SDK Manager 會逐步提示選擇
-make run -- -t cli
-
-# 全自動燒錄範例（Jetson AGX Orin）
-make run -- -t cli sdkmanager --cli \
-  --action install \
-  --login-type devzone \
-  --product Jetson \
-  --target-os Linux \
-  --version 6.1 \
-  --target JETSON_AGX_ORIN_TARGETS \
-  --flash \
-  --license accept \
-  --exit-on-finish
-```
-
 **GUI 模式**（需要 X11 display）：
 
 ```bash
@@ -127,6 +108,66 @@ make run -- -t gui               # 啟動 SDK Manager GUI
 ```
 
 > GUI 模式需要 host 有 X11 session 執行中。base template 的 `setup.sh` 會自動偵測 `$DISPLAY` 並設定 X11 socket forwarding + XAUTHORITY。
+
+**CLI 模式**（無頭模式）：
+
+```bash
+# 互動式 CLI — SDK Manager 會逐步提示選擇
+make run -- -t cli
+```
+
+### CLI 範例
+
+**1. 僅下載** — 下載 JetPack 元件，不安裝：
+
+```bash
+make run -- -t cli sdkmanager --cli \
+  --action install \
+  --login-type devzone \
+  --product Jetson \
+  --target-os Linux \
+  --version 6.2 \
+  --target JETSON_AGX_ORIN_TARGETS \
+  --license accept \
+  --stay-logged-in true \
+  --download-only \
+  --exit-on-finish
+```
+
+**2. 安裝（燒錄）** — 如果已下載過，跳過下載直接燒錄：
+
+```bash
+make run -- -t cli sdkmanager --cli \
+  --action install \
+  --login-type devzone \
+  --product Jetson \
+  --target-os Linux \
+  --version 6.2 \
+  --target JETSON_AGX_ORIN_TARGETS \
+  --flash \
+  --license accept \
+  --stay-logged-in true \
+  --exit-on-finish
+```
+
+**3. 全自動** — 下載 + 燒錄 + 安裝 SDK 元件一次完成：
+
+```bash
+make run -- -t cli sdkmanager --cli \
+  --action install \
+  --login-type devzone \
+  --product Jetson \
+  --target-os Linux \
+  --version 6.2 \
+  --target JETSON_AGX_ORIN_TARGETS \
+  --flash \
+  --license accept \
+  --stay-logged-in true \
+  --collect-usage-data enable \
+  --exit-on-finish
+```
+
+> 其他裝置請替換 `--target`：`JETSON_ORIN_NX_TARGETS`（Orin NX）或 `JETSON_ORIN_NANO_TARGETS`（Orin Nano）。JetPack 版本替換 `--version`。
 
 ### 支援的 Jetson Target
 
