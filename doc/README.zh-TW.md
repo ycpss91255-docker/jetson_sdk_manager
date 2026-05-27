@@ -155,9 +155,9 @@ SDK Manager 的下載檔案和登入 session 持久化在 `data/`（已 gitignor
 
 | Host 路徑 | 容器路徑 | 用途 |
 |-----------|---------|------|
-| `data/nvsdkm/` | `${HOME}/.nvsdkm` | 登入 session 快取（登入一次，重複使用） |
-| `data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | SDK 元件下載（~11 GB） |
-| `data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK 安裝目錄（~31 GB） |
+| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | 登入 session 快取（登入一次，重複使用） |
+| `./data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | SDK 元件下載（~11 GB） |
+| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK 安裝目錄（~31 GB） |
 
 首次登入會建立 session；後續執行可透過 `--stay-logged-in true` 重複使用。
 

@@ -155,9 +155,9 @@ SDK Manager downloads and login sessions are persisted in `data/` (gitignored):
 
 | Host path | Container path | Purpose |
 |-----------|----------------|---------|
-| `data/nvsdkm/` | `${HOME}/.nvsdkm` | Login session cache (login once, reuse) |
-| `data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | SDK component downloads (~11 GB) |
-| `data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK install folder (~31 GB) |
+| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | Login session cache (login once, reuse) |
+| `./data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | SDK component downloads (~11 GB) |
+| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK install folder (~31 GB) |
 
 First-time login creates the session; subsequent runs reuse it via `--stay-logged-in true`.
 

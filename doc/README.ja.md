@@ -68,8 +68,8 @@ SDK Manager のダウンロードファイルとログインセッションは `
 
 | Host パス | コンテナパス | 用途 |
 |-----------|------------|------|
-| `data/nvsdkm/` | `${HOME}/.nvsdkm` | ログインセッションキャッシュ |
-| `data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | SDK コンポーネントダウンロード（~10-20 GB） |
+| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | ログインセッションキャッシュ |
+| `./data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | SDK コンポーネントダウンロード（~10-20 GB） |
 
 ## Smoke Tests
 
