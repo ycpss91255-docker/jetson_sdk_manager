@@ -120,7 +120,7 @@ RUN . /etc/os-release && \
     dpkg -i cuda-keyring_1.1-1_all.deb && \
     rm cuda-keyring_1.1-1_all.deb && \
     apt-get update && \
-    apt-get install -y --no-install-recommends sdkmanager && \
+    apt-get install -y --no-install-recommends sdkmanager lbzip2 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
