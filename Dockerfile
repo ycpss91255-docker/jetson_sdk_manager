@@ -120,7 +120,8 @@ RUN . /etc/os-release && \
     dpkg -i cuda-keyring_1.1-1_all.deb && \
     rm cuda-keyring_1.1-1_all.deb && \
     apt-get update && \
-    apt-get install -y --no-install-recommends sdkmanager lbzip2 && \
+    apt-get install -y --no-install-recommends \
+        sdkmanager lbzip2 usbutils udev file && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
     grep -q '^root' /etc/sudoers || echo "root ALL=(ALL:ALL) ALL" >> /etc/sudoers

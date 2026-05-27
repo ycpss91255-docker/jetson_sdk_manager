@@ -32,12 +32,13 @@ make build && make run -- -t cli
 
 - **Host OS**：x86_64 Linux
 - **Docker Engine** >= v20.10.6
-- **Host 套件**（x86 host 燒錄 ARM target 必須）：
+- **QEMU binfmt**（x86 host 燒錄 ARM target 必須）：
 
   ```bash
-  sudo apt-get install qemu-user-static binfmt-support
-  sudo update-binfmts --enable
+  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
   ```
+
+  > 每次開機後執行一次即可。透過 Docker 註冊 ARM64 binary 翻譯至 kernel，不需安裝 host 套件。
 
 - **USB auto-suspend**：連接 Jetson 的 USB port 必須關閉 auto-suspend，否則燒錄可能卡住
 
@@ -302,4 +303,90 @@ jetson_sdk_manager/
 ├── .github/workflows/
 │   └── main.yaml                # CI/CD
 └── .gitignore
+```
+
+## 疑難排解
+
+### `chroot: failed to run command 'dpkg': Exec format error`
+
+Host kernel 無法執行 ARM64 binary。註冊 QEMU binfmt 翻譯器：
+
+```bash
+docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+```
+
+每次開機後執行一次。
+
+### `mknod: .../rootfs/dev/random: File exists`
+
+上次失敗的燒錄殘留了不完整的 rootfs 在 `data/nvidia_sdk/`。SDK Manager 的安裝腳本不具冪等性，無法覆蓋已存在的 device node。清除 rootfs 後重試：
+
+```bash
+sudo rm -rf data/nvidia_sdk/JetPack_*_TARGETS/Linux_for_Tegra/rootfs/
+```
+
+### `Could not detect a board` / 偵測不到 Jetson
+
+SDK Manager 找不到 Jetson 裝置。檢查以下項目：
+
+1. **Recovery mode** — 連接前 Jetson 必須進入 Force Recovery 模式：
+   - 拔掉電源
+   - 用 USB-C 線連接 Jetson **前面板**（按鈕側）與 host
+   - 按住 **REC（中間）按鈕**不放
+   - 接上電源（或按 Power 按鈕）
+   - 等 2 秒後放開 REC
+
+2. **在 host 端確認 recovery mode**：
+
+   ```bash
+   lsusb | grep 0955
+   ```
+
+   | 輸出 | 狀態 |
+   |------|------|
+   | `0955:7023 NVIDIA Corp. APX` | Recovery mode（AGX Orin） |
+   | `0955:7223 NVIDIA Corp. APX` | Recovery mode（Orin NX/Nano） |
+   | `0955:xxxx`（其他 product ID） | 正常模式 — 需重新進入 recovery |
+   | （無輸出） | 未偵測到 — 檢查線材/port |
+
+   > 注意：Recovery mode 使用 USB 2.0（480 Mbps），這是正常的。APX 模式下 USB 3.0 controller 未啟用。
+
+   如果沒有出現：
+
+   - **USB-C 線** — 部分線材僅支援充電，無資料線。請使用支援資料傳輸的線材
+   - **USB port** — 直接接到 host，不要經過 USB hub（hub 可能不支援 USB device mode）
+   - **接錯 port** — 使用前面板 USB-C（按鈕側），不是後面板 USB-C（電源側）
+
+### `The connected Jetson device is not ready for flash`
+
+USB 連線不穩定。依序嘗試以下步驟：
+
+1. 在 SDK Manager 對話框中按 **Reset USB Controller**
+2. 拔 USB-C → 拔 Jetson 電源 → 重新接 USB-C → 重新接電源 → 重新進入 recovery mode
+3. 換一條 USB-C 線
+4. 換 host 上的另一個 USB port（避免使用 hub）
+5. 重新開機 host
+
+### `tar: lbzip2: Cannot exec: No such file or directory`
+
+容器缺少 `lbzip2`。用最新的 Dockerfile 重新建置：
+
+```bash
+git pull && make build -- -t gui
+```
+
+### `root is not in the sudoers file`
+
+容器 image 缺少 root 的 sudoers 規則。用最新的 Dockerfile 重新建置：
+
+```bash
+git pull && make build -- -t gui
+```
+
+### `/bin/sh: 1: file: not found`
+
+容器缺少 `file` 指令。用最新的 Dockerfile 重新建置：
+
+```bash
+git pull && make build -- -t gui
 ```
