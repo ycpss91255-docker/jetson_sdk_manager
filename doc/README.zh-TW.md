@@ -390,3 +390,36 @@ git pull && make build -- -t gui
 ```bash
 git pull && make build -- -t gui
 ```
+
+### `ERROR: might be timeout in USB write` / `Return value 3`
+
+`flash.sh` 在 Boot ROM 通訊階段因 USB bulk transfer 超時而失敗：
+
+```
+Sending bct_br
+ERROR: might be timeout in USB write.
+Error: Return value 3
+```
+
+原因是 Jetson 的 USB endpoint 處於異常狀態 — 通常發生在之前的燒錄失敗或中斷之後。解決方法是**完整的硬體斷電重啟**：
+
+1. 完全拔除 Jetson 電源
+2. 按住 **Recovery** 按鈕
+3. 重新接上電源
+4. 等待 2–3 秒後鬆開 Recovery
+
+軟體重開機（`tegrarcm_v2 --reboot recovery`）**無法**解決此問題 — 必須透過硬體斷電來重置 USB endpoint。
+
+同時確認 host 已設定 USB buffer size（每次開機後執行一次）：
+
+```bash
+echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
+```
+
+### `command is failed`（recovery ramdisk 生成階段）
+
+`flash.sh` 在 `_BASE_KERNEL_VERSION=...` 之後出現 `command is failed` 錯誤。原因是缺少 `ssh-keygen`（`openssh-client` 套件）。用最新的 Dockerfile 重新建置：
+
+```bash
+git pull && make build -- -t gui
+```
