@@ -3,11 +3,12 @@
 bats_require_minimum_version 1.5.0
 
 setup() {
+  export LOG_FORMAT=text
   load "${BATS_TEST_DIRNAME}/test_helper"
 
   # Source setup.sh functions only (main is guarded)
   # shellcheck disable=SC1091
-  source /source/script/docker/setup.sh
+  source /source/script/docker/wrapper/setup.sh
 
   create_mock_dir
   TEMP_DIR="$(mktemp -d)"
@@ -183,7 +184,7 @@ privileged = false
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
   "
   assert_success
@@ -202,7 +203,7 @@ privileged = false
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
   "
   assert_success
@@ -217,7 +218,7 @@ EOF
   cp /source/config/docker/setup.conf "${TEMP_DIR}/config/docker/setup.conf"
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
   "
   assert_success
@@ -233,7 +234,7 @@ context_2 = vendor=../third_party
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
   "
   assert_success
@@ -262,7 +263,7 @@ context_1 = repo=..
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
   "
   assert_success
@@ -280,7 +281,7 @@ context_1 = one=../one
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
   "
   assert_success
@@ -311,7 +312,7 @@ context_3 = vendor=../third_party
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
   "
   assert_success
@@ -477,7 +478,7 @@ cap_add_1 = ALL
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
   "
   assert_success
@@ -539,7 +540,7 @@ fi'
 
 @test "_is_ssh_x11 false when SSH_CONNECTION unset (#321)" {
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     unset SSH_CONNECTION
     DISPLAY=localhost:10.0 _is_ssh_x11
   "
@@ -548,7 +549,7 @@ fi'
 
 @test "_is_ssh_x11 false when DISPLAY is local socket (:0) (#321)" {
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     SSH_CONNECTION='x y z w' DISPLAY=:0 _is_ssh_x11
   "
   assert_failure
@@ -556,7 +557,7 @@ fi'
 
 @test "_is_ssh_x11 false when DISPLAY is unset (#321)" {
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     SSH_CONNECTION='x y z w' DISPLAY='' _is_ssh_x11
   "
   assert_failure
@@ -564,7 +565,7 @@ fi'
 
 @test "_is_ssh_x11 false when DISPLAY points to a remote host (#321)" {
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     SSH_CONNECTION='x y z w' DISPLAY='other-host:0' _is_ssh_x11
   "
   assert_failure
@@ -608,7 +609,7 @@ EOS
   export XAUTH_LOG
   PATH="${_bin}:${PATH}" DISPLAY="localhost:10.0" \
     run bash -c "
-      source /source/script/docker/setup.sh
+      source /source/script/docker/wrapper/setup.sh
       _setup_ssh_x11_cookie '${TEMP_DIR}'
     "
   assert_success
@@ -640,7 +641,7 @@ EOS
 
   PATH="${_bin}:${PATH}" DISPLAY="localhost:10.0" \
     run bash -c "
-      source /source/script/docker/setup.sh
+      source /source/script/docker/wrapper/setup.sh
       _setup_ssh_x11_cookie '${TEMP_DIR}'
     "
   assert_failure
@@ -655,7 +656,7 @@ EOS
   # without touching PATH (which would also break setup.sh's own
   # dirname / sed / etc. lookups during source).
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     command() {
       if [[ \"\${1:-}\" == '-v' && \"\${2:-}\" == 'xauth' ]]; then
         return 1
@@ -680,7 +681,7 @@ EOS
     alice alice 1000 1000 \
     x86_64 alice false myrepo /tmp/ws \
     tw.archive.ubuntu.com mirror.twds.com.tw Asia/Taipei \
-    bridge host false all "gpu compute" \
+    bridge host private false all "gpu compute" \
     true confhash dockerhash \
     "" "" "" "" \
     "/path/to/.docker.xauth"
@@ -697,7 +698,7 @@ EOS
     alice alice 1000 1000 \
     x86_64 alice false myrepo /tmp/ws \
     tw.archive.ubuntu.com mirror.twds.com.tw Asia/Taipei \
-    bridge host false all "gpu compute" \
+    bridge host private false all "gpu compute" \
     true confhash dockerhash \
     "" "" "" "" \
     ""
@@ -1179,7 +1180,7 @@ EOF
     "x86_64" "dockerhub" "true" \
     "ros_noetic" "/workspace" \
     "tw.archive.ubuntu.com" "mirror.twds.com.tw" "Asia/Taipei" \
-    "host" "host" "true" \
+    "host" "host" "private" "true" \
     "all" "gpu" \
     "true" "abc123" "df456"
 
@@ -1190,6 +1191,7 @@ EOF
   run grep 'IMAGE_NAME=ros_noetic' "${_env}"; assert_success
   run grep 'NETWORK_MODE=host'  "${_env}"; assert_success
   run grep 'IPC_MODE=host'      "${_env}"; assert_success
+  run grep 'PID_MODE=private'   "${_env}"; assert_success
   run grep 'PRIVILEGED=true'    "${_env}"; assert_success
   run grep 'GPU_COUNT=all'      "${_env}"; assert_success
   run grep -F 'GPU_CAPABILITIES="gpu"' "${_env}"; assert_success
@@ -1226,7 +1228,7 @@ EOF
     "x86_64" "hub" "false" \
     "img" "${TEMP_DIR}" \
     "tw.archive.ubuntu.com" "mirror.twds.com.tw" "Asia/Taipei" \
-    "host" "host" "true" "all" "gpu" \
+    "host" "host" "private" "true" "all" "gpu" \
     "false" "${_h}" ""
   # stub detect_gui/detect_gpu to match stored false
   detect_gui() { local -n _o=$1; _o="false"; }
@@ -1245,7 +1247,7 @@ EOF
     "x86_64" "hub" "false" \
     "img" "${TEMP_DIR}" \
     "tw.archive.ubuntu.com" "mirror.twds.com.tw" "Asia/Taipei" \
-    "host" "host" "true" "all" "gpu" \
+    "host" "host" "private" "true" "all" "gpu" \
     "false" "${_h_old}" ""
   detect_gui() { local -n _o=$1; _o="false"; }
   detect_gpu() { local -n _o=$1; _o="false"; }
@@ -1272,7 +1274,7 @@ EOF
     "x86_64" "hub" "false" \
     "img" "${TEMP_DIR}" \
     "tw.archive.ubuntu.com" "mirror.twds.com.tw" "Asia/Taipei" \
-    "host" "host" "true" "all" "gpu" \
+    "host" "host" "private" "true" "all" "gpu" \
     "false" "${_h}" ""
   # Now detection says true
   detect_gui() { local -n _o=$1; _o="false"; }
@@ -1297,17 +1299,17 @@ EOF
 }
 
 @test "apply subcommand returns error when --base-path value is missing" {
-  run -127 bash -c "source /source/script/docker/setup.sh; main apply --base-path"
+  run -127 bash -c "source /source/script/docker/wrapper/setup.sh; main apply --base-path"
 }
 
 @test "apply subcommand returns error when --lang value is missing" {
-  run -127 bash -c "source /source/script/docker/setup.sh; main apply --lang"
+  run -127 bash -c "source /source/script/docker/wrapper/setup.sh; main apply --lang"
 }
 
 @test "apply --lang zh-TW sets Chinese messages for full run" {
   cp /source/config/docker/setup.conf "${TEMP_DIR}/config/docker/setup.conf"
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' --lang zh-TW 2>&1
   "
   assert_success
@@ -1326,11 +1328,11 @@ EOF
   # No TEMP_DIR/config/docker/setup.conf created — apply should fall back to template
   # default and announce it once on stderr at WARN level.
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
   "
   assert_success
-  assert_output --partial "[setup] WARNING:"
+  assert_output --partial "[setup] WARN :"
   assert_output --partial "no per-repo setup.conf"
   # #186 regression guard: the heads-up must NOT be demoted to INFO
   # (where it would scroll past). The env_done line legitimately uses
@@ -1345,11 +1347,11 @@ EOF
 # template defaults apply for every section
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
   "
   assert_success
-  assert_output --partial "[setup] WARNING:"
+  assert_output --partial "[setup] WARN :"
   assert_output --partial "per-repo setup.conf has no section"
 }
 
@@ -1361,7 +1363,7 @@ EOF
 mode = auto
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
   "
   assert_success
@@ -1371,11 +1373,11 @@ EOF
 
 @test "apply --lang zh-TW prints WARN in Traditional Chinese when setup.conf missing (#186)" {
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' --lang zh-TW 2>&1
   "
   assert_success
-  assert_output --partial "[setup] WARNING:"
+  assert_output --partial "[setup] WARN :"
   assert_output --partial "未找到"
 }
 
@@ -1383,22 +1385,23 @@ EOF
   # apply without --base-path walks 3 levels up from its own location
   # (script/docker/../../.. = repo root).
   mkdir -p "${TEMP_DIR}/sandbox_repo/.base/script/docker/lib" \
+           "${TEMP_DIR}/sandbox_repo/.base/script/docker/wrapper" \
            "${TEMP_DIR}/sandbox_repo/.base/config/docker"
-  cp /source/script/docker/setup.sh \
-    "${TEMP_DIR}/sandbox_repo/.base/script/docker/setup.sh"
-  cp /source/script/docker/i18n.sh \
-    "${TEMP_DIR}/sandbox_repo/.base/script/docker/i18n.sh"
-  cp /source/script/docker/_tui_conf.sh \
-    "${TEMP_DIR}/sandbox_repo/.base/script/docker/_tui_conf.sh"
+  cp /source/script/docker/wrapper/setup.sh \
+    "${TEMP_DIR}/sandbox_repo/.base/script/docker/wrapper/setup.sh"
+  cp /source/script/docker/lib/i18n.sh \
+    "${TEMP_DIR}/sandbox_repo/.base/script/docker/lib/i18n.sh"
+  cp /source/script/docker/lib/_tui_conf.sh \
+    "${TEMP_DIR}/sandbox_repo/.base/script/docker/lib/_tui_conf.sh"
   # setup.sh sources _lib.sh for the _log_* helpers (#290); _lib.sh
   # is an umbrella that sources lib/*.sh sub-libs post-#284.
-  cp /source/script/docker/_lib.sh \
-    "${TEMP_DIR}/sandbox_repo/.base/script/docker/_lib.sh"
-  cp /source/script/docker/lib/*.sh \
+  cp /source/script/docker/lib/_lib.sh \
+    "${TEMP_DIR}/sandbox_repo/.base/script/docker/lib/_lib.sh"
+  cp /source/script/docker/lib/* \
     "${TEMP_DIR}/sandbox_repo/.base/script/docker/lib/"
   cp /source/config/docker/setup.conf "${TEMP_DIR}/sandbox_repo/.base/config/docker/setup.conf"
 
-  run bash "${TEMP_DIR}/sandbox_repo/.base/script/docker/setup.sh" apply
+  run bash "${TEMP_DIR}/sandbox_repo/.base/script/docker/wrapper/setup.sh" apply
   assert_success
   assert [ -f "${TEMP_DIR}/sandbox_repo/.env" ]
 }
@@ -1434,7 +1437,7 @@ EOF
 @test "main apply subcommand regenerates .env + compose.yaml" {
   cp /source/config/docker/setup.conf "${TEMP_DIR}/config/docker/setup.conf"
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
   "
   assert_success
@@ -1461,7 +1464,7 @@ EOF
     "x86_64" "hub" "false" \
     "img" "${TEMP_DIR}" \
     "tw.archive.ubuntu.com" "mirror.twds.com.tw" "Asia/Taipei" \
-    "host" "host" "true" "all" "gpu" \
+    "host" "host" "private" "true" "all" "gpu" \
     "false" "${_h}" ""
   detect_gui() { local -n _o=$1; _o="false"; }
   detect_gpu() { local -n _o=$1; _o="false"; }
@@ -1478,7 +1481,7 @@ EOF
     "x86_64" "hub" "false" \
     "img" "${TEMP_DIR}" \
     "tw.archive.ubuntu.com" "mirror.twds.com.tw" "Asia/Taipei" \
-    "host" "host" "true" "all" "gpu" \
+    "host" "host" "private" "true" "all" "gpu" \
     "false" "${_h_old}" ""
   detect_gui() { local -n _o=$1; _o="false"; }
   detect_gpu() { local -n _o=$1; _o="false"; }
@@ -1498,10 +1501,10 @@ EOF
   # template-default fallback the same way `apply` does, so users
   # running the build.sh drift-check path see the heads-up too.
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main check-drift --base-path '${TEMP_DIR}' 2>&1
   "
-  assert_output --partial "[setup] WARNING:"
+  assert_output --partial "[setup] WARN :"
   assert_output --partial "no per-repo setup.conf"
 }
 
@@ -1510,10 +1513,10 @@ EOF
 # only comments, no [section] headers
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main check-drift --base-path '${TEMP_DIR}' 2>&1
   "
-  assert_output --partial "[setup] WARNING:"
+  assert_output --partial "[setup] WARN :"
   assert_output --partial "per-repo setup.conf has no section"
 }
 
@@ -1523,7 +1526,7 @@ EOF
 mode = auto
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main check-drift --base-path '${TEMP_DIR}' 2>&1
   "
   refute_output --partial "no per-repo setup.conf"
@@ -1532,10 +1535,10 @@ EOF
 
 @test "check-drift --lang zh-TW prints WARN in Traditional Chinese when setup.conf missing (#186)" {
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main check-drift --base-path '${TEMP_DIR}' --lang zh-TW 2>&1
   "
-  assert_output --partial "[setup] WARNING:"
+  assert_output --partial "[setup] WARN :"
   assert_output --partial "未找到"
 }
 
@@ -1550,17 +1553,18 @@ EOF
   # do after B-1) instead of `source` + function call. Validates the
   # subcommand dispatch path actually works when the script is executed.
   mkdir -p "${TEMP_DIR}/sandbox/.base/script/docker/lib" \
+           "${TEMP_DIR}/sandbox/.base/script/docker/wrapper" \
            "${TEMP_DIR}/sandbox/.base/config/docker"
-  cp /source/script/docker/setup.sh "${TEMP_DIR}/sandbox/.base/script/docker/setup.sh"
-  cp /source/script/docker/i18n.sh "${TEMP_DIR}/sandbox/.base/script/docker/i18n.sh"
-  cp /source/script/docker/_tui_conf.sh "${TEMP_DIR}/sandbox/.base/script/docker/_tui_conf.sh"
+  cp /source/script/docker/wrapper/setup.sh "${TEMP_DIR}/sandbox/.base/script/docker/wrapper/setup.sh"
+  cp /source/script/docker/lib/i18n.sh "${TEMP_DIR}/sandbox/.base/script/docker/lib/i18n.sh"
+  cp /source/script/docker/lib/_tui_conf.sh "${TEMP_DIR}/sandbox/.base/script/docker/lib/_tui_conf.sh"
   # setup.sh sources _lib.sh for the _log_* helpers (#290); _lib.sh
   # is an umbrella that sources lib/*.sh sub-libs post-#284.
-  cp /source/script/docker/_lib.sh "${TEMP_DIR}/sandbox/.base/script/docker/_lib.sh"
-  cp /source/script/docker/lib/*.sh "${TEMP_DIR}/sandbox/.base/script/docker/lib/"
+  cp /source/script/docker/lib/_lib.sh "${TEMP_DIR}/sandbox/.base/script/docker/lib/_lib.sh"
+  cp /source/script/docker/lib/* "${TEMP_DIR}/sandbox/.base/script/docker/lib/"
   cp /source/config/docker/setup.conf "${TEMP_DIR}/sandbox/.base/config/docker/setup.conf"
 
-  bash "${TEMP_DIR}/sandbox/.base/script/docker/setup.sh" apply \
+  bash "${TEMP_DIR}/sandbox/.base/script/docker/wrapper/setup.sh" apply \
     --base-path "${TEMP_DIR}/sandbox" >/dev/null 2>&1
 
   # #174: drift hash covers template + setup.conf. Mutating .local
@@ -1570,7 +1574,7 @@ EOF
 mode = off
 EOF
 
-  run bash "${TEMP_DIR}/sandbox/.base/script/docker/setup.sh" \
+  run bash "${TEMP_DIR}/sandbox/.base/script/docker/wrapper/setup.sh" \
     check-drift --base-path "${TEMP_DIR}/sandbox"
   assert_failure
   assert_output --partial "drift detected"
@@ -1677,7 +1681,7 @@ EOF
   cp /source/config/docker/setup.conf "${TEMP_DIR}/config/docker/setup.conf"
   # Seed .env via apply so it exists.
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
   "
   assert_success
@@ -1793,21 +1797,22 @@ EOF
 
 @test "set / show / list run end-to-end via subprocess" {
   mkdir -p "${TEMP_DIR}/sandbox/.base/script/docker/lib" \
+           "${TEMP_DIR}/sandbox/.base/script/docker/wrapper" \
            "${TEMP_DIR}/sandbox/config/docker"
-  cp /source/script/docker/setup.sh "${TEMP_DIR}/sandbox/.base/script/docker/setup.sh"
-  cp /source/script/docker/i18n.sh "${TEMP_DIR}/sandbox/.base/script/docker/i18n.sh"
-  cp /source/script/docker/_tui_conf.sh "${TEMP_DIR}/sandbox/.base/script/docker/_tui_conf.sh"
+  cp /source/script/docker/wrapper/setup.sh "${TEMP_DIR}/sandbox/.base/script/docker/wrapper/setup.sh"
+  cp /source/script/docker/lib/i18n.sh "${TEMP_DIR}/sandbox/.base/script/docker/lib/i18n.sh"
+  cp /source/script/docker/lib/_tui_conf.sh "${TEMP_DIR}/sandbox/.base/script/docker/lib/_tui_conf.sh"
   # setup.sh sources _lib.sh for the _log_* helpers (#290); _lib.sh
   # is an umbrella that sources lib/*.sh sub-libs post-#284.
-  cp /source/script/docker/_lib.sh "${TEMP_DIR}/sandbox/.base/script/docker/_lib.sh"
-  cp /source/script/docker/lib/*.sh "${TEMP_DIR}/sandbox/.base/script/docker/lib/"
+  cp /source/script/docker/lib/_lib.sh "${TEMP_DIR}/sandbox/.base/script/docker/lib/_lib.sh"
+  cp /source/script/docker/lib/* "${TEMP_DIR}/sandbox/.base/script/docker/lib/"
   cp /source/config/docker/setup.conf "${TEMP_DIR}/sandbox/config/docker/setup.conf"
 
-  run bash "${TEMP_DIR}/sandbox/.base/script/docker/setup.sh" \
+  run bash "${TEMP_DIR}/sandbox/.base/script/docker/wrapper/setup.sh" \
     set network.mode bridge --base-path "${TEMP_DIR}/sandbox"
   assert_success
 
-  run bash "${TEMP_DIR}/sandbox/.base/script/docker/setup.sh" \
+  run bash "${TEMP_DIR}/sandbox/.base/script/docker/wrapper/setup.sh" \
     show network.mode --base-path "${TEMP_DIR}/sandbox"
   assert_success
   assert_output "bridge"
@@ -2057,7 +2062,7 @@ EOF
   run bash -c "
     _SETUP_SCRIPT_DIR='${TEMP_DIR}/.base/script/docker'
     mkdir -p \"\${_SETUP_SCRIPT_DIR}\"
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main reset --yes --base-path '${TEMP_DIR}'
   "
   assert_success
@@ -2254,7 +2259,7 @@ EOF
 @test "[build] template defaults ship TW mirrors via arg_N" {
   cp /source/config/docker/setup.conf "${TEMP_DIR}/config/docker/setup.conf"
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
     grep '^APT_MIRROR_UBUNTU=' '${TEMP_DIR}/.env'
     grep '^APT_MIRROR_DEBIAN=' '${TEMP_DIR}/.env'
@@ -2271,7 +2276,7 @@ EOF
   _upsert_conf_value "${TEMP_DIR}/config/docker/setup.conf" build arg_2 \
     "APT_MIRROR_DEBIAN=deb.debian.org"
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
     grep '^APT_MIRROR_UBUNTU=' '${TEMP_DIR}/.env'
     grep '^APT_MIRROR_DEBIAN=' '${TEMP_DIR}/.env'
@@ -2290,7 +2295,7 @@ apt_mirror_ubuntu = mirror.example.com
 tz = Asia/Tokyo
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
     grep '^APT_MIRROR_UBUNTU=' '${TEMP_DIR}/.env'
     grep '^TZ=' '${TEMP_DIR}/.env'
@@ -2308,7 +2313,7 @@ EOF
   _upsert_conf_value "${TEMP_DIR}/config/docker/setup.conf" build arg_9 \
     "PYTHON_VERSION=3.12"
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
     grep '^PYTHON_VERSION=' '${TEMP_DIR}/.env'
   "
@@ -2320,7 +2325,7 @@ EOF
   cp /source/config/docker/setup.conf "${TEMP_DIR}/config/docker/setup.conf"
   _upsert_conf_value "${TEMP_DIR}/config/docker/setup.conf" build target_arch arm64
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep '^TARGET_ARCH=' '${TEMP_DIR}/.env'
   "
@@ -2333,7 +2338,7 @@ EOF
   # Explicit empty value (the template's default)
   _upsert_conf_value "${TEMP_DIR}/config/docker/setup.conf" build target_arch ""
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -c '^TARGET_ARCH=' '${TEMP_DIR}/.env'
   "
@@ -2346,7 +2351,7 @@ EOF
   cp /source/config/docker/setup.conf "${TEMP_DIR}/config/docker/setup.conf"
   _upsert_conf_value "${TEMP_DIR}/config/docker/setup.conf" build network host
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep '^BUILD_NETWORK=' '${TEMP_DIR}/.env'
   "
@@ -2358,7 +2363,7 @@ EOF
   cp /source/config/docker/setup.conf "${TEMP_DIR}/config/docker/setup.conf"
   _upsert_conf_value "${TEMP_DIR}/config/docker/setup.conf" build network ""
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -c '^BUILD_NETWORK=' '${TEMP_DIR}/.env'
   "
@@ -2390,7 +2395,7 @@ EOF
   local _repo="${TEMP_DIR}/repo"
   mkdir -p "${_repo}"
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${_repo}' 2>&1
   "
   assert_success
@@ -2406,10 +2411,10 @@ EOF
   # committed the file).
   local _repo="${TEMP_DIR}/repo"
   mkdir -p "${_repo}"
-  bash -c "source /source/script/docker/setup.sh; main apply --base-path '${_repo}'" \
+  bash -c "source /source/script/docker/wrapper/setup.sh; main apply --base-path '${_repo}'" \
     >/dev/null 2>&1
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${_repo}' 2>&1
     grep '^WS_PATH=' '${_repo}/.env'
     grep '^mount_1' '${_repo}/config/docker/setup.conf'
@@ -2427,7 +2432,7 @@ EOF
   local _repo="${TEMP_DIR}/repo"
   local _pin="${TEMP_DIR}/custom_ws"
   mkdir -p "${_repo}" "${_pin}"
-  bash -c "source /source/script/docker/setup.sh; main apply --base-path '${_repo}'" \
+  bash -c "source /source/script/docker/wrapper/setup.sh; main apply --base-path '${_repo}'" \
     >/dev/null 2>&1
   # #174: user pins go into the override file (.local), not the
   # materialized snapshot.
@@ -2436,7 +2441,7 @@ EOF
 mount_1 = ${_pin}:/home/\${USER_NAME}/work
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${_repo}' 2>&1
     grep '^WS_PATH=' '${_repo}/.env'
     grep '^mount_1' '${_repo}/config/docker/setup.conf'
@@ -2459,12 +2464,12 @@ EOF
   # needed, the stale value is gone after one apply.
   local _repo="${TEMP_DIR}/repo"
   mkdir -p "${_repo}"
-  bash -c "source /source/script/docker/setup.sh; main apply --base-path '${_repo}'" \
+  bash -c "source /source/script/docker/wrapper/setup.sh; main apply --base-path '${_repo}'" \
     >/dev/null 2>&1
   sed -i 's|^mount_1.*|mount_1 = /nonexistent/stale/ws:/home/${USER_NAME}/work|' \
     "${_repo}/config/docker/setup.conf"
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${_repo}' 2>&1
     grep '^WS_PATH=' '${_repo}/.env'
   "
@@ -2487,7 +2492,7 @@ EOF
   mkdir -p "${_repo}"
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${_repo}' 2>&1
   "
   assert_success
@@ -2499,11 +2504,11 @@ EOF
 @test "workspace opt-out: cleared mount_1 means no workspace mount in compose" {
   local _repo="${TEMP_DIR}/repo"
   mkdir -p "${_repo}"
-  bash -c "source /source/script/docker/setup.sh; main apply --base-path '${_repo}'" \
+  bash -c "source /source/script/docker/wrapper/setup.sh; main apply --base-path '${_repo}'" \
     >/dev/null 2>&1
   # User clears mount_1 (opt-out)
   sed -i 's|^mount_1.*|mount_1 =|' "${_repo}/config/docker/setup.conf"
-  bash -c "source /source/script/docker/setup.sh; main apply --base-path '${_repo}'" \
+  bash -c "source /source/script/docker/wrapper/setup.sh; main apply --base-path '${_repo}'" \
     >/dev/null 2>&1
   # mount_1 stays empty (not re-populated)
   run grep '^mount_1' "${_repo}/config/docker/setup.conf"
@@ -2560,7 +2565,7 @@ gpu_mode = off
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -F 'deploy:' '${TEMP_DIR}/compose.yaml' | head -1
   "
@@ -2576,7 +2581,7 @@ gpu_capabilities = gpu compute
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -E 'driver: nvidia' '${TEMP_DIR}/compose.yaml'
   "
@@ -2592,7 +2597,7 @@ gpu_capabilities = gpu
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -E 'count: 2$' '${TEMP_DIR}/compose.yaml'
   "
@@ -2608,7 +2613,7 @@ gpu_capabilities = gpu compute utility
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -F 'capabilities: [gpu, compute, utility]' '${TEMP_DIR}/compose.yaml'
   "
@@ -2623,7 +2628,7 @@ runtime = nvidia
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -E '^    runtime: nvidia$' '${TEMP_DIR}/compose.yaml'
   "
@@ -2638,7 +2643,7 @@ runtime = off
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -c '^    runtime:' '${TEMP_DIR}/compose.yaml' || true
   "
@@ -2654,7 +2659,7 @@ mode = off
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -c 'DISPLAY' '${TEMP_DIR}/compose.yaml' || true
   "
@@ -2668,7 +2673,7 @@ mode = force
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -F '/tmp/.X11-unix:/tmp/.X11-unix:ro' '${TEMP_DIR}/compose.yaml'
   "
@@ -2685,7 +2690,7 @@ ipc = host
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep '^NETWORK_MODE=' '${TEMP_DIR}/.env'
   "
@@ -2700,11 +2705,73 @@ ipc = private
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep '^IPC_MODE=' '${TEMP_DIR}/.env'
   "
   assert_output "IPC_MODE=private"
+}
+
+@test "[network] pid = host writes PID_MODE=host to .env" {
+  cat > "${TEMP_DIR}/config/docker/setup.conf" <<'EOF'
+[network]
+mode = host
+ipc = host
+pid = host
+EOF
+  unset SETUP_CONF
+  run bash -c "
+    source /source/script/docker/wrapper/setup.sh
+    main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
+    grep '^PID_MODE=' '${TEMP_DIR}/.env'
+  "
+  assert_output "PID_MODE=host"
+}
+
+@test "[network] pid default (private) writes PID_MODE=private to .env" {
+  cat > "${TEMP_DIR}/config/docker/setup.conf" <<'EOF'
+[network]
+mode = host
+ipc = host
+EOF
+  unset SETUP_CONF
+  run bash -c "
+    source /source/script/docker/wrapper/setup.sh
+    main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
+    grep '^PID_MODE=' '${TEMP_DIR}/.env'
+  "
+  assert_output "PID_MODE=private"
+}
+
+@test "[network] pid default (private) omits pid: line from compose.yaml" {
+  cat > "${TEMP_DIR}/config/docker/setup.conf" <<'EOF'
+[network]
+mode = host
+ipc = host
+EOF
+  unset SETUP_CONF
+  run bash -c "
+    source /source/script/docker/wrapper/setup.sh
+    main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
+    grep 'pid:' '${TEMP_DIR}/compose.yaml'
+  "
+  assert_failure
+}
+
+@test "[network] pid = host emits pid: host in compose.yaml" {
+  cat > "${TEMP_DIR}/config/docker/setup.conf" <<'EOF'
+[network]
+mode = host
+ipc = host
+pid = host
+EOF
+  unset SETUP_CONF
+  run bash -c "
+    source /source/script/docker/wrapper/setup.sh
+    main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
+    grep -F 'pid: \${PID_MODE}' '${TEMP_DIR}/compose.yaml'
+  "
+  assert_success
 }
 
 @test "[network] network_name = my_bridge under mode=bridge emits external network ref" {
@@ -2716,7 +2783,7 @@ network_name = my_bridge
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -E '^networks:' '${TEMP_DIR}/compose.yaml'
   "
@@ -2732,7 +2799,7 @@ port_1 = 8080:80
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -E '8080:80' '${TEMP_DIR}/compose.yaml'
   "
@@ -2748,7 +2815,7 @@ port_1 = 8080:80
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -c '8080:80' '${TEMP_DIR}/compose.yaml' || true
   "
@@ -2766,7 +2833,7 @@ shm_size = 2gb
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -E 'shm_size: 2gb' '${TEMP_DIR}/compose.yaml'
   "
@@ -2780,7 +2847,7 @@ shm_size =
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -c 'shm_size:' '${TEMP_DIR}/compose.yaml' || true
   "
@@ -2796,7 +2863,7 @@ env_1 = ROS_DOMAIN_ID=7
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -F 'ROS_DOMAIN_ID=7' '${TEMP_DIR}/compose.yaml'
   "
@@ -2809,7 +2876,7 @@ EOF
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -c '^    environment:' '${TEMP_DIR}/compose.yaml' || true
   "
@@ -2825,7 +2892,7 @@ tmpfs_1 = /tmp
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -E '^      - /tmp$' '${TEMP_DIR}/compose.yaml'
   "
@@ -2839,7 +2906,7 @@ tmpfs_1 = /tmp/cache:size=1g
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -F '/tmp/cache:size=1g' '${TEMP_DIR}/compose.yaml'
   "
@@ -2852,7 +2919,7 @@ EOF
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -c '^    tmpfs:' '${TEMP_DIR}/compose.yaml' || true
   "
@@ -2868,7 +2935,7 @@ device_1 = /dev/video0:/dev/video0
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -E -- '- /dev/video0:/dev/video0' '${TEMP_DIR}/compose.yaml'
   "
@@ -2883,7 +2950,7 @@ cgroup_rule_1 = c 189:* rwm
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -F 'c 189:* rwm' '${TEMP_DIR}/compose.yaml'
   "
@@ -2900,7 +2967,7 @@ mount_2 = /data:/data
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -E -- '- /data:/data' '${TEMP_DIR}/compose.yaml'
   "
@@ -2915,7 +2982,7 @@ mount_2 = /etc/machine-id:/etc/machine-id:ro
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -F '/etc/machine-id:/etc/machine-id:ro' '${TEMP_DIR}/compose.yaml'
   "
@@ -2931,7 +2998,7 @@ privileged = false
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep '^PRIVILEGED=' '${TEMP_DIR}/.env'
   "
@@ -3189,7 +3256,7 @@ FROM devel AS runtime
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
     grep -E '^[[:space:]]+runtime:$' '${TEMP_DIR}/compose.yaml'
   "
@@ -3208,7 +3275,7 @@ FROM devel AS gui
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
   "
   assert_success
@@ -3230,7 +3297,7 @@ FROM devel AS headless
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
   "
   assert_success
@@ -3259,7 +3326,7 @@ FROM devel AS test
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
   "
   assert_success
@@ -3291,7 +3358,7 @@ EOF
 FROM devel AS base
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}'
   " 2>&1
   # Validator sees `base` as a parsed stage post-Dockerfile read, but
@@ -3316,7 +3383,7 @@ FROM devel AS latest
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
   "
   assert_failure
@@ -3332,7 +3399,7 @@ FROM devel AS v0
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}'
   "
   assert_failure
@@ -3351,7 +3418,7 @@ FROM devel AS gui
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1
   "
   assert_success
@@ -3373,7 +3440,7 @@ FROM devel AS headless
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
   "
   assert_success
@@ -3390,7 +3457,7 @@ FROM base AS devel
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
   "
   assert_success
@@ -3403,7 +3470,7 @@ EOF
   # Stub detect_gpu/gui to match what was stored, so non-Dockerfile
   # drift sources stay quiet and we observe ONLY the Dockerfile drift.
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     detect_gui() { local -n _o=\$1; _o=\"\$(grep -oP '^SETUP_GUI_DETECTED=\\K.*' '${TEMP_DIR}/.env' 2>/dev/null || echo false)\"; }
     detect_gpu() { local -n _o=\$1; _o=\"\$(grep -oP '^GPU_ENABLED=\\K.*' '${TEMP_DIR}/.env' 2>/dev/null || echo false)\"; }
     _check_setup_drift '${TEMP_DIR}'
@@ -3425,7 +3492,7 @@ FROM devel AS gui
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
   "
   assert_success
@@ -3439,7 +3506,7 @@ FROM devel AS headless
 EOF
 
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     detect_gui() { local -n _o=\$1; _o=\"\$(grep -oP '^SETUP_GUI_DETECTED=\\K.*' '${TEMP_DIR}/.env' 2>/dev/null || echo false)\"; }
     detect_gpu() { local -n _o=\$1; _o=\"\$(grep -oP '^GPU_ENABLED=\\K.*' '${TEMP_DIR}/.env' 2>/dev/null || echo false)\"; }
     _check_setup_drift '${TEMP_DIR}'
@@ -3568,6 +3635,7 @@ EOF
     gui.mode \
     network.mode \
     network.ipc \
+    network.pid \
     network.network_name \
     security.privileged
   do
@@ -3730,7 +3798,7 @@ FROM devel AS headless
 EOF
   unset SETUP_CONF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
   "
   assert_success
@@ -3769,7 +3837,7 @@ mode = force
 gui.mode = off
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
   "
   assert_success
@@ -3809,7 +3877,7 @@ network.mode = bridge
 network.port_1 = 8080:80
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
   "
   assert_success
@@ -3843,7 +3911,7 @@ volumes.mount_inherit = false
 volumes.mount_1 = /only:/only
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
   "
   assert_success
@@ -3885,7 +3953,7 @@ cap_add_2 = NET_ADMIN
 gui.mode = off
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' >/dev/null 2>&1
   "
   assert_success
@@ -3915,7 +3983,7 @@ gui.mode = off
 gui.mode = off
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1 >/dev/null
   "
   assert_success
@@ -3937,7 +4005,7 @@ gui.mode = off
 image.rule_1 = prefix:bogus_
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1 >/dev/null
   "
   assert_success
@@ -3956,7 +4024,7 @@ EOF
 gui.mode = off
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' 2>&1 >/dev/null
   "
   assert_failure
@@ -3969,18 +4037,18 @@ EOF
 
 @test "setup.sh set: prints 3-line confirmation by default" {
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main set --base-path '${TEMP_DIR}' build.arg_4 ROS2_DISTRO=jazzy
   "
   assert_success
   assert_output --partial "[setup] set [build] arg_4 = ROS2_DISTRO=jazzy"
   assert_output --partial "[setup] file:"
-  assert_output --partial "[setup] next: run './setup.sh apply'"
+  assert_output --partial "[setup] next: run 'make build' (auto-applies) or './setup.sh apply'"
 }
 
 @test "setup.sh set --quiet: produces empty stdout" {
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main set --quiet --base-path '${TEMP_DIR}' build.arg_4 ROS2_DISTRO=jazzy
   "
   assert_success
@@ -3989,7 +4057,7 @@ EOF
 
 @test "setup.sh set -q: short form also suppresses output" {
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main set -q --base-path '${TEMP_DIR}' build.arg_4 ROS2_DISTRO=jazzy
   "
   assert_success
@@ -3998,7 +4066,7 @@ EOF
 
 @test "setup.sh set --quiet: still writes the value (mutation not skipped)" {
   bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main set --quiet --base-path '${TEMP_DIR}' build.arg_4 ROS2_DISTRO=jazzy
   "
   run cat "${TEMP_DIR}/config/docker/setup.conf"
@@ -4008,18 +4076,18 @@ EOF
 
 @test "setup.sh add: prints 3-line confirmation by default" {
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main add --base-path '${TEMP_DIR}' build.arg HARDWARE=arm64
   "
   assert_success
   assert_output --partial "[setup] add [build] arg_"
   assert_output --partial "[setup] file:"
-  assert_output --partial "[setup] next: run './setup.sh apply'"
+  assert_output --partial "[setup] next: run 'make build' (auto-applies) or './setup.sh apply'"
 }
 
 @test "setup.sh add --quiet: produces empty stdout" {
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main add --quiet --base-path '${TEMP_DIR}' build.arg HARDWARE=arm64
   "
   assert_success
@@ -4032,13 +4100,13 @@ EOF
 arg_1 = HARDWARE=arm64
 EOC
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main remove --base-path '${TEMP_DIR}' build.arg_1
   "
   assert_success
   assert_output --partial "[setup] remove [build] arg_1"
   assert_output --partial "[setup] file:"
-  assert_output --partial "[setup] next: run './setup.sh apply'"
+  assert_output --partial "[setup] next: run 'make build' (auto-applies) or './setup.sh apply'"
 }
 
 @test "setup.sh remove --quiet: produces empty stdout" {
@@ -4047,7 +4115,7 @@ EOC
 arg_1 = HARDWARE=arm64
 EOC
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main remove --quiet --base-path '${TEMP_DIR}' build.arg_1
   "
   assert_success
@@ -4057,19 +4125,19 @@ EOC
 @test "setup.sh reset --yes: prints next: hint and file: by default" {
   : > "${TEMP_DIR}/config/docker/setup.conf"
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main reset --yes --base-path '${TEMP_DIR}'
   "
   assert_success
   assert_output --partial "[setup]"
   assert_output --partial "[setup] file:"
-  assert_output --partial "[setup] next: run './setup.sh apply'"
+  assert_output --partial "[setup] next: run 'make build' (auto-applies) or './setup.sh apply'"
 }
 
 @test "setup.sh reset --yes --quiet: produces empty stdout" {
   : > "${TEMP_DIR}/config/docker/setup.conf"
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main reset --yes --quiet --base-path '${TEMP_DIR}'
   "
   assert_success
@@ -4083,7 +4151,7 @@ FROM sys AS base
 FROM base AS devel
 EOC
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --quiet --base-path '${TEMP_DIR}' 2>&1
   "
   assert_success
@@ -4102,7 +4170,7 @@ EOF
   # Baseline: mode=force resolves GUI_ENABLED=true regardless of host
   # GUI detection.
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' --print-resolved 2>/dev/null
   "
   assert_success
@@ -4110,7 +4178,7 @@ EOF
   assert_output --partial "GUI_ENABLED=true"
   # CLI override flips GUI to off, ignoring setup.conf.
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' --gui off --print-resolved 2>/dev/null
   "
   assert_success
@@ -4124,7 +4192,7 @@ EOF
 mode = off
 EOF
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' --gui=force --print-resolved 2>/dev/null
   "
   assert_success
@@ -4134,7 +4202,7 @@ EOF
 
 @test "apply --gui rejects values outside auto|force|off (#338)" {
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' --gui bogus 2>&1
   "
   assert_failure
@@ -4154,7 +4222,7 @@ FROM sys AS base
 FROM base AS devel
 EOC
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' --print-resolved 2>/dev/null
   "
   assert_success
@@ -4179,7 +4247,7 @@ FROM sys AS base
 FROM base AS devel
 EOC
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     SETUP_DETECT_JETSON=false main apply --base-path '${TEMP_DIR}' --gui force --print-resolved 2>/dev/null
   "
   assert_success
@@ -4198,7 +4266,7 @@ FROM sys AS base
 FROM base AS devel
 EOC
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' --no-x11-cookie --print-resolved 2>/dev/null
   "
   assert_success
@@ -4216,7 +4284,7 @@ FROM sys AS base
 FROM base AS devel
 EOC
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     main apply --base-path '${TEMP_DIR}' --print-resolved 2>/dev/null
   "
   assert_success
@@ -4234,7 +4302,7 @@ FROM sys AS base
 FROM base AS devel
 EOC
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     SETUP_GUI=off main apply --base-path '${TEMP_DIR}' --print-resolved 2>/dev/null
   "
   assert_success
@@ -4253,10 +4321,83 @@ FROM sys AS base
 FROM base AS devel
 EOC
   run bash -c "
-    source /source/script/docker/setup.sh
+    source /source/script/docker/wrapper/setup.sh
     SETUP_GUI=off main apply --base-path '${TEMP_DIR}' --gui force --print-resolved 2>/dev/null
   "
   assert_success
   # CLI --gui force wins
   assert_output --partial "GUI_MODE=force"
+}
+
+# ════════════════════════════════════════════════════════════════════
+# #450 P2: propagation + non-privileged guard
+# ════════════════════════════════════════════════════════════════════
+
+@test "apply warns when device propagation used without privileged (#450 P2)" {
+  mkdir -p "${TEMP_DIR}/config/docker"
+  cat > "${TEMP_DIR}/config/docker/setup.conf" <<'EOC'
+[security]
+privileged = false
+[devices]
+device_1 = /dev:/dev:rslave
+EOC
+  run bash -c "
+    source /source/script/docker/wrapper/setup.sh
+    main apply --base-path '${TEMP_DIR}' --print-resolved 2>&1
+  "
+  assert_success
+  assert_output --partial "propagation"
+  assert_output --partial "privileged"
+}
+
+@test "apply suppresses propagation warning when privileged is true (#450 P2)" {
+  mkdir -p "${TEMP_DIR}/config/docker"
+  cat > "${TEMP_DIR}/config/docker/setup.conf" <<'EOC'
+[security]
+privileged = true
+[devices]
+device_1 = /dev:/dev:rslave
+EOC
+  run bash -c "
+    source /source/script/docker/wrapper/setup.sh
+    main apply --base-path '${TEMP_DIR}' --print-resolved 2>&1
+  "
+  assert_success
+  refute_output --partial "propagation"
+}
+
+# ════════════════════════════════════════════════════════════════════
+# #450 P4: duplicate device/volume target path detection
+# ════════════════════════════════════════════════════════════════════
+
+@test "apply warns when device and volume have same target path (#450 P4)" {
+  mkdir -p "${TEMP_DIR}/config/docker"
+  cat > "${TEMP_DIR}/config/docker/setup.conf" <<'EOC'
+[devices]
+device_1 = /dev:/dev:rslave
+[volumes]
+mount_5 = /dev:/dev
+EOC
+  run bash -c "
+    source /source/script/docker/wrapper/setup.sh
+    main apply --base-path '${TEMP_DIR}' --print-resolved 2>&1
+  "
+  assert_success
+  assert_output --partial "duplicate"
+}
+
+@test "apply does NOT warn duplicate when device and volume targets differ (#450 P4)" {
+  mkdir -p "${TEMP_DIR}/config/docker"
+  cat > "${TEMP_DIR}/config/docker/setup.conf" <<'EOC'
+[devices]
+device_1 = /dev:/dev:rslave
+[volumes]
+mount_5 = /data:/data
+EOC
+  run bash -c "
+    source /source/script/docker/wrapper/setup.sh
+    main apply --base-path '${TEMP_DIR}' --print-resolved 2>&1
+  "
+  assert_success
+  refute_output --partial "duplicate"
 }

@@ -74,10 +74,10 @@ teardown() {
   refute_line --regexp '^build( |$)'
 }
 
-@test "\`make help\` lists the 10 user-facing targets" {
+@test "\`make help\` lists the 11 user-facing targets" {
   run make help
   assert_success
-  for _target in build run exec stop prune setup setup-tui upgrade upgrade-check help; do
+  for _target in build run start exec stop prune setup setup-tui upgrade upgrade-check help; do
     assert_line --partial "${_target}"
   done
 }
@@ -231,6 +231,42 @@ teardown() {
   refute_line --regexp '^build( |$)'
   refute_line --regexp '^run( |$)'
   refute_line --regexp '^upgrade( |$)'
+}
+
+# ════════════════════════════════════════════════════════════════════
+# `make start` — combined build + run (#428)
+# ════════════════════════════════════════════════════════════════════
+
+@test "\`make start\` invokes ./script/build.sh then ./script/run.sh" {
+  run make start
+  assert_success
+  assert_line "build"
+  assert_line "run"
+}
+
+@test "\`make start\` runs build before run (line order)" {
+  run make start
+  assert_success
+  local build_line=-1 run_line=-1 i=0
+  while IFS= read -r line; do
+    [[ "${line}" == "build"* ]] && build_line=$i
+    [[ "${line}" == "run"* ]] && run_line=$i
+    i=$(( i + 1 ))
+  done <<< "${output}"
+  (( build_line >= 0 && run_line >= 0 && build_line < run_line ))
+}
+
+@test "\`make start -- --no-cache\` forwards args to build.sh only" {
+  run make start -- --no-cache
+  assert_success
+  assert_line "build --no-cache"
+  assert_line "run"
+}
+
+@test "\`make start\` appears in help" {
+  run make help
+  assert_success
+  assert_line --partial "start"
 }
 
 # ════════════════════════════════════════════════════════════════════

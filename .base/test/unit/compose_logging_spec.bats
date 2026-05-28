@@ -2,7 +2,7 @@
 #
 # Tests for [logging] / [logging.<svc>] support in generate_compose_yaml
 # and the supporting _collect_logging / _parse_logging_svc_sections
-# parsers in script/docker/setup.sh. Closes #310.
+# parsers in script/docker/wrapper/setup.sh. Closes #310.
 
 bats_require_minimum_version 1.5.0
 
@@ -10,7 +10,7 @@ setup() {
   load "${BATS_TEST_DIRNAME}/test_helper"
 
   # shellcheck disable=SC1091
-  source /source/script/docker/setup.sh
+  source /source/script/docker/wrapper/setup.sh
 
   TEMP_DIR="$(mktemp -d)"
   COMPOSE_OUT="${TEMP_DIR}/compose.yaml"
@@ -29,7 +29,7 @@ teardown() {
 @test "generate_compose_yaml omits logging: block when both inputs empty (back-compat)" {
   local _extras=()
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "" ""
   run grep -E '^    logging:$' "${COMPOSE_OUT}"
   assert_failure
@@ -41,7 +41,7 @@ teardown() {
   printf -v _global '%s\n%s\n%s\n%s' \
     "driver=json-file" "max_size=10m" "max_file=3" "compress=true"
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "${_global}" ""
   run grep -E '^    logging:$' "${COMPOSE_OUT}"
   assert_success
@@ -59,7 +59,7 @@ teardown() {
   local _extras=()
   local _global="driver=local"
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "${_global}" ""
   # The test service block sits after devel; assert the logging line
   # appears at least twice (once for devel, once for test).
@@ -72,7 +72,7 @@ teardown() {
   local _extras=()
   local _global="driver=syslog"
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "${_global}" ""
   run grep -F 'driver: syslog' "${COMPOSE_OUT}"
   assert_success
@@ -85,7 +85,7 @@ teardown() {
   local _global
   printf -v _global '%s\n%s' "driver=json-file" "max_size=50m"
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "${_global}" ""
   run grep -E '^      options:$' "${COMPOSE_OUT}"
   assert_success
@@ -103,7 +103,7 @@ teardown() {
   printf -v _global '%s\n%s\n%s' "driver=json-file" "max_size=10m" "max_file=3"
   local _per_svc="test:max_size=50m"
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "${_global}" "${_per_svc}"
   # Both 10m (devel/global) and 50m (test override) should appear.
   run grep -F 'max-size: "10m"' "${COMPOSE_OUT}"
@@ -118,7 +118,7 @@ teardown() {
   printf -v _global '%s\n%s\n%s' "driver=json-file" "max_size=10m" "max_file=3"
   local _per_svc="test:max_size=50m"
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "${_global}" "${_per_svc}"
   # The `test` service's logging block must still emit max-file (inherited).
   # Slice from the second `logging:` line onward and assert max-file appears.
@@ -225,7 +225,7 @@ CONF
   local _global
   printf -v _global '%s\n%s' "driver=json-file" "local_path=./logs/"
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "${_global}" ""
   # Volume mount on devel: <resolved>:/var/log/myrepo
   run grep -F ":/var/log/myrepo" "${COMPOSE_OUT}"
@@ -239,7 +239,7 @@ CONF
   local _extras=()
   local _global="driver=json-file"
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "${_global}" ""
   run grep -F "LOG_FILE_PATH" "${COMPOSE_OUT}"
   assert_failure
@@ -253,7 +253,7 @@ CONF
   # Per-svc test gets its own local_path but devel inherits empty global.
   local _per_svc="test:local_path=./test-logs/"
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "${_global}" "${_per_svc}"
   # test service: LOG_FILE_PATH=/var/log/myrepo/test.log
   run grep -F "LOG_FILE_PATH=/var/log/myrepo/test.log" "${COMPOSE_OUT}"
@@ -268,7 +268,7 @@ CONF
   local _global
   printf -v _global '%s\n%s' "driver=json-file" "local_path=/srv/logs/"
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "${_global}" ""
   run grep -F "/srv/logs:/var/log/myrepo" "${COMPOSE_OUT}"
   assert_success
@@ -280,7 +280,7 @@ CONF
   # `options:` block — local_path is not a docker logging option.
   local _global="local_path=./logs/"
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "${_global}" ""
   # Volume + env still emitted.
   run grep -F "LOG_FILE_PATH=/var/log/myrepo/devel.log" "${COMPOSE_OUT}"
@@ -297,7 +297,7 @@ CONF
   local _global="driver=json-file"
   local _per_svc="test:local_path=./test-logs/"
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "${_global}" "${_per_svc}"
   # test stanza has its own volumes + environment.
   run awk '/^  test:/ { c=1 } c { print }' "${COMPOSE_OUT}"
@@ -443,7 +443,7 @@ CONF
   # The [logging] section in the template default setup.conf is the
   # primary surface where downstream maintainers learn about the
   # local_path feature + the entrypoint helper. PR #356 originally
-  # pointed at `.base/script/docker/_entrypoint_logging.sh` (the
+  # pointed at `.base/script/docker/runtime/logging.sh` (the
   # subtree path inside the workspace bind mount), which crashes on
   # build-time smoke ($USER unset) and is wrong on multi-repo
   # workspaces (WS_PATH = workspace parent, not repo root). Path A
@@ -455,7 +455,7 @@ CONF
   run grep -F '/usr/local/lib/base/_entrypoint_logging.sh' "${_conf}"
   assert_success
   # Negative guard: the broken pre-#368 path must not reappear.
-  run grep -F '.base/script/docker/_entrypoint_logging.sh' "${_conf}"
+  run grep -F '.base/script/docker/runtime/logging.sh' "${_conf}"
   assert_failure
 }
 
@@ -485,7 +485,7 @@ EOF
   local _global
   printf -v _global '%s\n%s' "driver=json-file" "local_path=./logs/"
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "${_global}" ""
   # The runtime block must carry its OWN LOG_FILE_PATH override line
   # alongside the inherited devel.log; runtime.log filename is unique
@@ -511,7 +511,7 @@ EOF
   local _global
   printf -v _global '%s\n%s' "driver=json-file" "local_path=./logs/"
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "${_global}" ""
   # The bind mount string ends with `:/var/log/myrepo`. Expect at
   # least 3 emits in compose.yaml: devel + test + runtime (the
@@ -542,7 +542,7 @@ EOF
   local _extras=()
   # No [logging] global_str at all; local_path unset entirely.
   generate_compose_yaml "${COMPOSE_OUT}" "myrepo" \
-    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" \
+    "false" "false" "0" "gpu" _extras "" "" "" "" "" "" "host" "host" "private" \
     "" "" "" "" "" "" "" "" "" "" ""
   # Slice the runtime block: from `^  runtime:$` to the next top-level
   # service header (`^  [a-z][a-z0-9_-]*:$`) and assert neither

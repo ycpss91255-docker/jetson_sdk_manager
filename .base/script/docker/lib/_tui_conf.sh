@@ -20,10 +20,10 @@ _DOCKER_TUI_CONF_SOURCED=1
 #
 # Valid forms:
 #   <host>:<container>
-#   <host>:<container>:ro
-#   <host>:<container>:rw
-# Both parts must be non-empty. Exactly 1 or 2 ':' separators (env-var
-# forms like ${FOO} count as host path, not separators).
+#   <host>:<container>:<mode>
+# where <mode> is one or more of: ro, rw, rslave, rshared, rprivate,
+# slave, shared, private — comma-separated (e.g. rw,rslave).
+# Both path parts must be non-empty. Exactly 1 or 2 ':' separators.
 _validate_mount() {
   local _v="${1-}"
   [[ -z "${_v}" ]] && return 1
@@ -36,7 +36,15 @@ _validate_mount() {
       ;;
     3)
       [[ -n "${_parts[0]}" && -n "${_parts[1]}" ]] || return 1
-      [[ "${_parts[2]}" == "ro" || "${_parts[2]}" == "rw" ]] || return 1
+      local _mode
+      IFS=',' read -ra _mode <<< "${_parts[2]}"
+      local _m
+      for _m in "${_mode[@]}"; do
+        case "${_m}" in
+          ro|rw|rslave|rshared|rprivate|slave|shared|private) ;;
+          *) return 1 ;;
+        esac
+      done
       ;;
     *)
       return 1
