@@ -1,6 +1,6 @@
 # TEST.md
 
-Template self-tests: **1452 tests** total (1384 unit + 68 integration).
+Template self-tests: **1466 tests** total (1398 unit + 68 integration).
 
 > Counted scope is the `make -f Makefile.ci test` self-test suite —
 > what runs in the `Self Test` CI job. The 36 shared smoke tests under
@@ -47,37 +47,31 @@ Template self-tests: **1452 tests** total (1384 unit + 68 integration).
 | `_print_config_summary wraps dividers + section headers in ANSI when FORCE_COLOR=1 (#309)` | Color migration via _log_plain |
 | `_print_config_summary omits ANSI when NO_COLOR=1 overrides FORCE_COLOR=1 (#309)` | NO_COLOR precedence on summary |
 
-### test/unit/log_spec.bats (25)
+### test/unit/log_spec.bats (48)
 
-| Test | Description |
-|------|-------------|
-| `_log_err writes '[<tag>] ERROR: <msg>' to stderr (no TTY -> no color)` | Default routing + no-color path |
-| `_log_warn writes '[<tag>] WARNING: <msg>' to stderr (no TTY -> no color)` | Warning routing + no-color path |
-| `_log_info writes '[<tag>] INFO: <msg>' to stdout (no TTY -> no color)` | Info routing + no-color path |
-| `_log_err joins multi-token message with single spaces` | Multi-token message join |
-| `_log_err with no tag exits non-zero (param ':?' guard)` | Required tag guard |
-| `_log_warn with no tag exits non-zero (param ':?' guard)` | Required tag guard |
-| `_log_info with no tag exits non-zero (param ':?' guard)` | Required tag guard |
-| `_log_err with FORCE_COLOR=1 emits red bold ANSI on non-TTY stderr` | FORCE_COLOR overrides TTY detection |
-| `_log_warn with FORCE_COLOR=1 emits yellow ANSI on non-TTY stderr` | FORCE_COLOR overrides TTY detection |
-| `_log_info with FORCE_COLOR=1 emits dim ANSI on non-TTY stdout` | FORCE_COLOR overrides TTY detection |
-| `_log_err with NO_COLOR=1 + FORCE_COLOR=1 omits ANSI (NO_COLOR wins)` | NO_COLOR precedence |
-| `_log_warn with NO_COLOR=1 omits ANSI` | NO_COLOR strips color |
-| `_log_info with NO_COLOR=1 omits ANSI` | NO_COLOR strips color |
-| `_log_color_enabled returns non-zero on non-TTY fd 1 without overrides` | Auto-detect default off |
-| `_log_color_enabled returns 0 with FORCE_COLOR=1 on non-TTY` | FORCE_COLOR opt-in |
-| `_log_color_enabled returns non-zero with NO_COLOR=1 + FORCE_COLOR=1` | NO_COLOR wins over FORCE_COLOR |
-| `_log_color_enabled with no fd argument exits non-zero (param guard)` | Required fd guard |
-| `_log_plain writes '[<tag>] <msg>' to stdout with no style (no ANSI even with FORCE_COLOR)` | Empty style suppresses color |
-| `_log_plain with bold style + FORCE_COLOR=1 wraps message in ANSI bold` | Bold style ANSI wrap |
-| `_log_plain with dim style + FORCE_COLOR=1 wraps message in ANSI dim` | Dim style ANSI wrap |
-| `_log_plain with bold style + NO_COLOR=1 omits ANSI even with FORCE_COLOR=1` | NO_COLOR precedence on _log_plain |
-| `_log_plain on non-TTY without FORCE_COLOR omits ANSI` | Auto-detect default off |
-| `_log_plain joins multi-token message with single spaces` | Multi-token message join |
-| `_log_plain with no tag exits non-zero (param ':?' guard)` | Required tag guard |
-| `_log_plain with unknown style + FORCE_COLOR=1 falls back to no ANSI (case match miss)` | Unknown style safe fallback |
+OTel-aligned logger (#423, #438). Single-sink tty-detect dispatch,
+`LOG_FORMAT=auto|text|json` override, strict body enforcement (unregistered
+body = fatal), `display=` attribute for i18n text in text mode, UTC
+microsecond timestamps, `_log_plain` removed.
 
-### test/unit/setup_spec.bats (305)
+| Category | Tests |
+|----------|-------|
+| Text output format (`LOG_FORMAT=text`): timestamp + aligned level + tag, multi-token join, attr=val skip, `display=` override | 10 |
+| Timestamp: UTC with microsecond precision in both text and JSON | 2 |
+| Stream routing: stdout for INFO/DEBUG, stderr for WARN/ERROR/FATAL | 2 |
+| Single-sink tty-detect dispatch (#438): non-TTY auto JSON, `LOG_FORMAT=text` force, `LOG_FORMAT=json` force, `LOG_FORMAT=auto` equiv | 5 |
+| JSON output: OTel fields, custom attributes, severity numbers, per-line structure | 4 |
+| TRACEPARENT in JSON: trace_id/span_id present/absent | 2 |
+| Strict body enforcement (#438): unregistered fatal, registered OK, empty OK, error names body + file | 4 |
+| Missing service rejected, `_log_fatal` does not auto-exit | 3 |
+| Scoped wrappers: `_log_with_trace` save/restore, `_log_with_span` trace_id | 4 |
+| `_log_plain` removed (#438) | 1 |
+| `_log_color_enabled`: TTY detect, FORCE_COLOR, NO_COLOR precedence | 3 |
+| FORCE_COLOR text: red bold ERROR, yellow WARN, NO_COLOR strips | 3 |
+| Event registry: registered/unregistered/comment detection | 3 |
+| lnav format file | 2 |
+
+### test/unit/setup_spec.bats (309)
 
 Covers core detection (user/hardware/docker/GPU/GUI), the INI parser
 (`_parse_ini_section`), setup.conf section merging (`_load_setup_conf`
@@ -111,7 +105,7 @@ writeback (first-time bootstrap / user-edit respect / opt-out).
 | Per-repo setup.conf missing / empty WARN (#150 / #186: missing → WARN, empty → WARN, partial → silent, zh-TW lang) | 4 |
 | Per-repo setup.conf WARN on check-drift path (#157 / #186: missing → WARN, empty → WARN, partial → silent, zh-TW lang) | 4 |
 | `[additional_contexts]` parsing + compose emission (#199: omitted by default, devel/test block, runtime block, numeric sort, empty-slot skip, _setup_known_section) | 6 |
-| Per-section setup.conf parameter end-to-end coverage (#202: [deploy] gpu_mode/count/capabilities/runtime, [gui] mode, [network] mode/ipc/network_name/port_*, [resources] shm_size, [environment] env_*, [tmpfs] tmpfs_*, [devices] device_*/cgroup_rule_*, [volumes] mount_2..N, [security] privileged) | 25 |
+| Per-section setup.conf parameter end-to-end coverage (#202: [deploy] gpu_mode/count/capabilities/runtime, [gui] mode, [network] mode/ipc/pid/network_name/port_*, [resources] shm_size, [environment] env_*, [tmpfs] tmpfs_*, [devices] device_*/cgroup_rule_*, [volumes] mount_2..N, [security] privileged) | 28 |
 | `_validate_stage_name` (#215: format / baseline / reserved exit codes) | 4 |
 | `_parse_dockerfile_stages` (#215: extract, dedup, file-order, missing file, lowercase `as` rejection) | 6 |
 | `_compute_dockerfile_hash` (#215: stable / add / remove / non-FROM-AS edits / missing) | 5 |
@@ -180,7 +174,7 @@ target areas the issue body called out.
 | `_swap_image_rule` (both occupied / target empty / source empty / both empty / m<1) | 5 |
 | `_edit_list_section` via `_edit_section_environment` (env_ add/edit/remove, invalid → msgbox+retry, max+1 indexing, Cancel/Esc) | 7 |
 | `_edit_section_image` top-level dispatch (add max+1, click rule_N, Back) | 3 |
-| `_edit_section_network` (host+host no shm prompt, bridge prompts name+ports, ipc=private prompts shm, empty network_name allowed) | 4 |
+| `_edit_section_network` (host+host+pid no shm prompt, bridge prompts name+ports, ipc=private prompts shm, empty network_name allowed) | 4 |
 | `_edit_section_deploy` (off short-circuits — only writes gpu_mode) | 1 |
 | Multi-section dispatch from main menu (network → host → save) | 1 |
 | Per-stage UI #220 (`_list_dockerfile_stages_available` from-Dockerfile + baseline filter, `_count_stage_overrides` OVR+CURRENT dedup + empty skip, `_edit_stage_gui` mode + __inherit, `_edit_stage_scalar` write + empty-clears, `_edit_stage_list` inherit toggle + add) | 10 |
@@ -503,7 +497,7 @@ opt-out (no inspect calls + no rmi even when ids would have moved),
 if displaced>` visible + zero real rmi), and `--help` mentions the
 `--no-prune` flag.
 
-### test/unit/run_sh_spec.bats (54)
+### test/unit/run_sh_spec.bats (57)
 
 Unit tests for `run.sh`. Mirrors the build_sh_spec.bats harness;
 `docker ps` reads from a controllable stub file so tests can simulate
@@ -517,10 +511,11 @@ routing, `--instance`, already-running guard, Wayland xhost path,
 `--lang` / `--instance` argument validation, fallback `_detect_lang`
 branches, **runtime log-line i18n** (bootstrap + already-running
 error translate in all four languages via the local `_msg()` table),
-**#216 auto-build soft guard / `--build` opt-in** (image
-present → silent, image absent + TTY → INFO, image absent + no TTY →
-silent, per-target image inspect, `--build` invokes `./build.sh test`
-before compose up, `--build` after check-drift), and **`-C` / `--chdir`
+**#216/#429 auto-build gate** (image present → silent + no build,
+image absent → auto-delegates to `./build.sh TARGET`, non-devel target
+forwarded, build failure aborts run, per-target image inspect, `--build`
+invokes `./build.sh test` before compose up, `--build` after
+check-drift), and **`-C` / `--chdir`
 flag** (docker_harness#53: redirect FILE_PATH, short + long form,
 value-required and directory guards, usage help mention), and **`-v`
 / `--verbose` / `-vv` / `--very-verbose` flag** (#311: same export +
@@ -528,7 +523,10 @@ trace pattern as build.sh, parity across wrappers), and **#386
 foreground exit auto compose-down** (default-on for devel + one-shot
 non-devel targets, `--no-rm` opts out, `-d` suppresses the trap; the
 trap fires `down --remove-orphans` to mirror stop.sh and close the
-worktree-removed-before-stop network leak).
+worktree-removed-before-stop network leak), and **#448 `--` CMD
+separator** (`--` stops flag parsing so CMD flags like `--target`
+don't collide; positional CMD also stops parsing; usage documents
+`--`).
 
 ### test/unit/exec_sh_spec.bats (53)
 
@@ -633,7 +631,7 @@ exists alongside the wrapper symlink; the documented "cannot find _lib.sh"
 error path still fires (with the new `.base/...` path in the diagnostic)
 when neither `.base/` nor the sibling fallback is present.
 
-### test/unit/makefile_user_spec.bats (28)
+### test/unit/makefile_user_spec.bats (32)
 
 Unit tests for the user-facing `script/docker/Makefile` rewritten in #330.
 Each named wrapper target is a thin 1:1 forward to `./script/<name>.sh`
@@ -646,10 +644,12 @@ help. Sandbox copies the Makefile into a fake repo, planting stub
 can assert exactly which underlying script ran and with what args.
 
 Covers: `.DEFAULT_GOAL` (bare `make` -> help, does not invoke wrappers);
-`make help` lists 10 user-facing targets; removed sub-cmd targets
+`make help` lists 11 user-facing targets; removed sub-cmd targets
 (`test` / `runtime` / `run-detach`) are absent from help; 1:1 invocation
-across all 10 targets (build / run / exec / stop / prune / setup /
-setup-tui / upgrade / upgrade-check / help); positional forwarding
+across all 11 targets (build / run / start / exec / stop / prune / setup /
+setup-tui / upgrade / upgrade-check / help); `make start` combined
+build+run (invokes build.sh then run.sh, correct execution order, args
+forwarded to build.sh only, visible in help); positional forwarding
 (`make build test`, `make build runtime`, `make upgrade v0.30.0`, `make
 setup foo`); `--` separator + flag forwarding (`make build -- --no-cache
 test`, `make run -- -d`, `make exec -- -t bats-src bash`); catch-all
@@ -658,19 +658,22 @@ multiple positional args); `VAR=VALUE` guard via `MAKEOVERRIDES` (single,
 multiple, after `--` separator — all abort with error); absolute
 container path forwarding (`/nonexistent/...`, `/root/demo/...`).
 
-### test/unit/compose_gen_spec.bats (50)
+### test/unit/compose_gen_spec.bats (52)
 
 Covers `generate_compose_yaml` conditional output: AUTO-GENERATED
 header, baseline workspace volume, network/ipc/privileged env-var
-references, `test` service presence, image name threading, and
-conditional GPU deploy block + GUI env/volumes + extra volumes from
-`[volumes]` section.
+references, conditional pid emission (only for `host`; omitted for
+`private` since Docker rejects the literal), `test` service presence,
+image name threading, and conditional GPU deploy block + GUI
+env/volumes + extra volumes from `[volumes]` section.
 
 | Test | Description |
 |------|-------------|
 | `outputs AUTO-GENERATED header` | Header check |
 | `always emits workspace volume` | Baseline |
 | `emits network_mode/ipc/privileged via env var` | env-var baked |
+| `omits pid when default private` | pid omit |
+| `emits pid env-var ref when host` | pid host |
 | `emits test service with profiles: [test]` | test service |
 | `image field contains repo name` | Image name |
 | `does NOT emit /dev:/dev by default (not in baseline)` | Baseline scope |
@@ -758,7 +761,7 @@ the host file content and the inherited stdout (preserving
 | `entrypoint_logging warns + continues when target is a directory (#328)` | Failure-mode fallback |
 | `entrypoint_logging captures stderr along with stdout (#328)` | 2>&1 redirect |
 
-### test/unit/template_spec.bats (150)
+### test/unit/template_spec.bats (147)
 
 | Test | Description |
 |------|-------------|
@@ -903,14 +906,6 @@ the host file content and the inherited stdout (preserving
 | `alias_func is called` | Function call |
 | `color_git_branch is called` | Function call |
 | `color_git_branch sets PS1` | PS1 setting |
-
-### test/unit/pip_setup_spec.bats (3)
-
-| Test | Description |
-|------|-------------|
-| `pip setup.sh runs pip install with requirements.txt` | pip install |
-| `pip setup.sh sets PIP_BREAK_SYSTEM_PACKAGES=1` | Break system packages |
-| `pip setup.sh fails when pip is not available` | Missing pip error |
 
 ### test/unit/ci_spec.bats (17)
 

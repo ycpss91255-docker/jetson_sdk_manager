@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.39.0] - 2026-05-28
+
+### Added
+- **`[devices]` mount propagation support** — device entries like `device_1 = /dev:/dev:rslave` are auto-redirected from compose `devices:` to `volumes:` long-form bind mount (compose `devices:` does not support propagation). Plain devices without propagation emit to `devices:` as before. Validator (`_validate_mount`) extended to accept `rslave|rshared|rprivate|slave|shared|private` modes, combinable with `ro|rw` (e.g. `rw,rslave`). Warns when propagation is used without `[security] privileged = true` (P2, #453). Warns on duplicate target paths between `[devices]` and `[volumes]` (P4, #455). Per-stage emit supports propagation (P3, #454). Closes #450, closes #453, closes #454, closes #455.
+
+### Changed
+- **`run.sh` CMD separator `--` + positional stop** — first positional arg now stops run.sh flag parsing so CMD flags like `--target` no longer collide with run.sh's own `-t/--target`. Explicit `--` separator documented in usage (4 languages). Closes #448.
+- **`script/docker/` reorganized into role-based subdirectories** — wrappers move to `wrapper/`, all libs consolidate into `lib/`, container-side helpers move to `runtime/`. `_entrypoint_logging.sh` renamed to `runtime/logging.sh` (container path `/usr/local/lib/base/logging.sh`). New `runtime/entrypoint.sh` template replaces init.sh heredoc. Breaking: downstream symlink paths change; `make upgrade` handles migration automatically. Closes #406.
+
+## [v0.38.0] - 2026-05-27
+
+### Added
+- **`build-worker.yaml` `submodules` input** — optional checkout mode (`true` / `recursive`) for repos whose Dockerfile source lives in a git submodule. Default empty string preserves existing behavior (no submodule checkout). Only the `build` job checkout is affected; `path-filter` stays `submodules: false`. Closes #444.
+
+## [v0.37.0] - 2026-05-27
+
+### Added
+- **`make start` combined build+run target** — runs `./script/build.sh` then `./script/run.sh` in one step, reducing friction for new repo onboarding. Args after `--` are forwarded to build.sh only; run.sh runs with defaults. Closes #428.
+
+### Changed
+- **`run.sh` first-run auto-build gate** — when the target image is missing locally, `run.sh` now delegates to `./build.sh <target>` instead of letting Compose auto-build (which silently skips the test stage). Makes `make run` on a fresh clone equivalent to `make build && make run`. Build failure aborts the run. The `--build` flag (explicit `./build.sh test` with lint+smoke) is unchanged. Closes #429.
+- **`lib/log.sh` single-sink tty-detect + strict body + microsecond UTC** (#438). (1) Dispatch switches on `test -t <fd>`: TTY emits text, pipe/redirect emits JSON; `LOG_FORMAT=auto|text|json` overrides. `LOG_JSON_FILE` dual-sink removed. (2) Unregistered body is a fatal error by default; all callers migrated to registered event names with `display=` attribute for i18n text. (3) Timestamps now ISO 8601 UTC with microsecond precision (`%6NZ`) in both text and JSON. (4) `_log_plain` removed; `config_summary.sh` uses local `_summary_print` helper. Breaking changes: `LOG_JSON_FILE` env dropped, `LOG_STRICT_BODY` env dropped (strict is now default). Closes #438.
+
+## [v0.36.0] - 2026-05-27
+
+### Changed
+- **`lib/log.sh` rewritten as OTel-aligned 5-level JSON logger** (P1 of #423). 5 functions (`_log_debug` / `_log_info` / `_log_warn` / `_log_err` / `_log_fatal`) with `(service, body, [attr=val]...)` API. Registered body emits JSON per OTel Logs Data Model; unregistered body falls back to legacy text for backward compat. W3C TRACEPARENT propagation via `_log_with_trace` / `_log_with_span` scoped wrappers. Ships `lib/log-events.txt` (body enum registry) and `lib/log.lnav-format.json`. Closes #423.
+- **`lib/log.sh` dual output + text format upgrade** (P2). Terminal always receives text with ISO 8601 timestamp + 5-char aligned level (`DEBUG`/`INFO`/`WARN`/`ERROR`/`FATAL`). `LOG_JSON_FILE` env enables parallel structured JSON output to file. `attr=val` args are filtered from text display but included in JSON. `WARNING` label shortened to `WARN` for alignment. i18n messages preserved in text mode only.
+- **P3+P4: bare stderr migration + lint enforcement**. Converted remaining bare `printf >&2` in `setup.sh`, `run.sh`, `ci.sh` to `_log_*` helpers. Added `script/ci/lint_bare_stderr.sh` to flag bare stderr output outside `_log_*` / `_die` / allowlisted patterns.
+
+## [v0.35.0] - 2026-05-27
+
+### Added
+- **`[network] pid` setting** for PID namespace mode (`host` / `private`). Default `private` (Docker default). Set `pid = host` when running multiple GPU-rendering containers on the same GPU to avoid NVIDIA driver pthread robust mutex failures (`ESRCH`). Follows the `[network] ipc` precedent: setup.conf -> `.env` `PID_MODE` -> compose.yaml `pid:`. Per-stage override and TUI selection (4 languages) included. Closes #412.
+- **`build-worker.yaml` `extra_stages` input** — opt-in comma-separated list of extra Dockerfile stages to build after the standard pipeline. For each stage `<name>`, if a corresponding `<name>-test` stage exists in the Dockerfile it is built first (same convention as `devel-test` / `runtime-test`). Each extra stage gets its own GHA cache scope. Blocklist validation rejects attempts to re-build standard pipeline stages. Closes #415.
+
+### Changed
+- **`.hadolint.yaml` cleanup** — removed 5 globally ignored rules (DL3003, DL3006, DL3007, DL3046, DL4006) and properly fixed the underlying violations: pinned bats/alpine versions via `ARG` in `Dockerfile.test-tools`, added `-l` flag to `useradd` in `Dockerfile.example`, replaced `RUN cd` with `WORKDIR`, and moved DL4006 to inline ignore on the Alpine `RUN` with pipe. Closes #405.
+
+### Removed
+- **`dockerfile/setup/` pip scaffolding** — removed entirely (reverses #261). `python3-pip` dropped from `Dockerfile.example` apt install, `SETUP_DIR` ARG and all COPY/RUN pip references removed. Downstream repos that need pip handle it independently in their own Dockerfiles. Closes #407.
+
 ### Fixed
 - **Makefile forwarding: absolute container paths** — `make exec -- /root/demo/test.sh` failed with `No rule to make target` because GNU Make's built-in implicit rules stat every goal on the host filesystem. Added `--no-builtin-rules` + `.SUFFIXES:` so the `%:` catch-all fires correctly for arbitrary absolute paths. Closes #414 (case 2).
 - **Makefile forwarding: VAR=VALUE args silently lost** — `make setup set build.arg_4 ROS2_DISTRO=jazzy` dropped the `ROS2_DISTRO=jazzy` token because Make treats any `KEY=VALUE` CLI token as a variable override, not a goal. Added a `MAKEOVERRIDES` guard that detects swallowed args and aborts with a clear error message pointing users to the underlying script. Closes #414 (case 1).

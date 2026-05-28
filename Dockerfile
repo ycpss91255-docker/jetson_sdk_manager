@@ -13,6 +13,7 @@ ARG BASE_IMAGE="ubuntu:22.04"
 ARG TEST_TOOLS_IMAGE="test-tools:local"
 
 ############################## sys ##############################
+# hadolint ignore=DL3006
 FROM ${BASE_IMAGE} AS sys
 
 ARG USER_NAME="user"
@@ -53,7 +54,7 @@ RUN if getent group "${USER_GID}" >/dev/null; then \
         usermod -l "${USER_NAME}" -d "/home/${USER_NAME}" -m \
             "$(getent passwd "${USER_UID}" | cut -d: -f1)"; \
     else \
-        useradd -m -s /bin/bash -u "${USER_UID}" -g "${USER_GID}" "${USER_NAME}"; \
+        useradd -m -l -s /bin/bash -u "${USER_UID}" -g "${USER_GID}" "${USER_NAME}"; \
     fi && \
     echo "${USER_NAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
@@ -86,17 +87,6 @@ ARG USER="${USER_NAME}"
 ARG GROUP="${USER_GROUP}"
 ARG ENTRYPOINT_FILE="script/entrypoint.sh"
 ARG CONFIG_DIR="/tmp/config"
-# Build-time setup scaffolding (#261): pip install + other deferred
-# Dockerfile RUN helpers live under .base/dockerfile/setup/ post
-# this release. Previously sat under .base/config/pip/ but that
-# blurred "user-facing runtime config" (everything else in config/)
-# with "build-time install scaffolding" (pip only). Separating them
-# keeps config/ as the pure runtime-override surface (#254 layered
-# COPY semantics) and lets new build-time helpers land alongside
-# without re-introducing the conceptual mix. Cleared via
-# `sudo rm -rf ${SETUP_DIR}` at the end of the shell-setup RUN
-# block, same lifetime as CONFIG_DIR.
-ARG SETUP_DIR="/tmp/setup"
 # Layered config/ override (template#254): two sequential COPYs into
 # /tmp/config/. The first brings .base/config/ defaults; the
 # second overlays <repo>/config/ on top. File-level merge -- files in
@@ -113,7 +103,7 @@ ARG CONFIG_SRC="config"
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# hadolint ignore=SC1091
+# hadolint ignore=DL4006,SC1091
 RUN . /etc/os-release && \
     UBUNTU_VER=$(echo "${VERSION_ID}" | tr -d '.') && \
     wget -q "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${UBUNTU_VER}/x86_64/cuda-keyring_1.1-1_all.deb" && \
@@ -137,27 +127,20 @@ RUN . /etc/os-release && \
 COPY --chmod=0755 "./${ENTRYPOINT_FILE}" "/entrypoint.sh"
 # Host-side log tee helper (#328 / #368). Source from
 # script/entrypoint.sh with a single un-guarded line:
-#   . /usr/local/lib/base/_entrypoint_logging.sh
+#   . /usr/local/lib/base/logging.sh
 # The helper is a no-op when LOG_FILE_PATH is unset, so the source
 # line is safe to add unconditionally -- repos that haven't opted
 # into [logging] local_path stay unaffected. In-image path (vs the
 # bind-mounted .base/) avoids two failure modes: build-time smoke
 # crashes when $USER is unset, and multi-repo workspaces where
 # WS_PATH is the workspace parent rather than the repo root.
-COPY --chmod=0755 .base/script/docker/_entrypoint_logging.sh /usr/local/lib/base/_entrypoint_logging.sh
+COPY --chmod=0755 .base/script/docker/runtime/logging.sh /usr/local/lib/base/logging.sh
 # Layer 1: .base/config/ defaults (subtree-managed, updates with
 # .base/upgrade.sh).
 COPY --chown="${USER}":"${GROUP}" --chmod=0755 .base/config "${CONFIG_DIR}"
 # Layer 2: <repo>/config/ overrides (per-repo, survives subtree
 # pull). Files here overlay matching paths from layer 1.
 COPY --chown="${USER}":"${GROUP}" --chmod=0755 "${CONFIG_SRC}" "${CONFIG_DIR}"
-# Build-time setup scaffolding (#261). No layered override here --
-# .base/dockerfile/setup/ is the single source of truth; downstream
-# customizes by patching its own Dockerfile RUN line(s) or by adding
-# more entries to its own dockerfile/setup/ tree + a matching COPY
-# (rare). The directory is cleared at the end of the shell-setup RUN
-# block alongside CONFIG_DIR.
-COPY --chmod=0755 .base/dockerfile/setup "${SETUP_DIR}"
 
 USER "${USER}"
 
@@ -168,15 +151,9 @@ USER "${USER}"
 # WorkingDir. Refs #334.
 ENV HOME="/home/${USER_NAME}"
 
-# Setup pip packages (build-time scaffolding from SETUP_DIR, #261).
-RUN "${SETUP_DIR}"/pip/setup.sh
-
 # Setup shell, terminator, tmux. The bashrc append picks up the
 # bashrc.d bootstrap loop (template#254) which sources any *.sh
 # drop-ins under ~/.bashrc.d/ at interactive shell start.
-# SETUP_DIR is cleared alongside CONFIG_DIR (same build-time-only
-# lifetime; once their content has been consumed by the RUN steps
-# above, they are pure bloat in the final image).
 RUN cat "${CONFIG_DIR}"/shell/bashrc >> "${HOME}/.bashrc" && \
     chown "${USER}":"${GROUP}" "${HOME}/.bashrc" && \
     mkdir -p "${HOME}/.bashrc.d" && \
@@ -184,7 +161,7 @@ RUN cat "${CONFIG_DIR}"/shell/bashrc >> "${HOME}/.bashrc" && \
     chown -R "${USER}":"${GROUP}" "${HOME}/.bashrc.d" && \
     "${CONFIG_DIR}"/shell/terminator/setup.sh && \
     "${CONFIG_DIR}"/shell/tmux/setup.sh && \
-    sudo rm -rf "${CONFIG_DIR}" "${SETUP_DIR}"
+    sudo rm -rf "${CONFIG_DIR}"
 
 # (Optional) Repo-local Dockerfile-internal build helpers. Put any
 # shell helpers that should run during `docker build` under
@@ -206,6 +183,7 @@ CMD ["bash"]
 
 ############################## devel-test ##############################
 # Resolves to test-tools:local (local build.sh) or ghcr.io/.../test-tools:vX.Y.Z (CI).
+# hadolint ignore=DL3006
 FROM ${TEST_TOOLS_IMAGE} AS test-tools-stage
 
 FROM devel AS devel-test
@@ -226,24 +204,18 @@ COPY script/*.sh /lint/
 # Helpers sourced by the wrappers. Must sit next to them so
 # build.sh / run.sh / exec.sh / stop.sh / setup.sh can source _lib.sh
 # (which in turn sources i18n.sh); setup.sh also sources _tui_conf.sh.
-# Issue #104: removing these used to be compensated by inline
-# `_detect_lang` fallbacks in every script — now the canonical
-# definition lives once in i18n.sh.
-COPY .base/script/docker/_lib.sh \
-     .base/script/docker/i18n.sh \
-     .base/script/docker/_tui_conf.sh \
-     /lint/
-# _lib.sh post-#284 is an umbrella that sources lib/*.sh sub-libs.
-# Preserve the lib/ subdirectory in /lint/ so the source paths inside
-# _lib.sh resolve identically to the normal .base/ layout.
+# Post-#406 all helpers live under lib/ — single COPY preserves the
+# directory layout. The wrappers themselves live under wrapper/.
 COPY .base/script/docker/lib /lint/lib
+COPY .base/script/docker/wrapper /lint/wrapper
 # Lint coverage for repo-local Dockerfile-internal build helpers (#275).
 # Uncomment if your repo has any <repo>/script/docker/*.sh build helpers
 # (see the commented example in the devel stage above); the COPY brings
 # them into /lint/ so ShellCheck catches issues at build time.
 #COPY script/docker/*.sh /lint/
-RUN shellcheck -S warning /lint/*.sh /lint/lib/*.sh
-RUN cd /lint && hadolint Dockerfile
+RUN shellcheck -S warning /lint/wrapper/*.sh /lint/lib/*.sh
+WORKDIR /lint
+RUN hadolint Dockerfile
 
 # Bats (from pre-built test-tools image; see TEST_TOOLS_IMAGE at top)
 COPY --from=test-tools-stage /opt/bats /opt/bats
@@ -275,7 +247,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 COPY config/packages/ /tmp/packages/
 
-# hadolint ignore=SC2046
+# hadolint ignore=DL4006,SC2046
 RUN . /etc/os-release && \
     pkg_list="/tmp/packages/${VERSION_CODENAME}.txt" && \
     if [ ! -f "${pkg_list}" ]; then \
