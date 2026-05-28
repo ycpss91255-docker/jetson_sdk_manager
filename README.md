@@ -390,3 +390,36 @@ The container is missing the `file` command. Rebuild with the latest Dockerfile:
 ```bash
 git pull && make build -- -t gui
 ```
+
+### `ERROR: might be timeout in USB write` / `Return value 3`
+
+`flash.sh` fails during Boot ROM communication with a USB bulk transfer timeout:
+
+```
+Sending bct_br
+ERROR: might be timeout in USB write.
+Error: Return value 3
+```
+
+This is caused by a stale USB endpoint state on the Jetson — typically after a previous failed or interrupted flash attempt. The fix is a **full hardware power cycle**:
+
+1. Disconnect the Jetson power completely
+2. Hold the **Recovery** button
+3. Reconnect power
+4. Release Recovery after 2–3 seconds
+
+A software reboot (`tegrarcm_v2 --reboot recovery`) is **not sufficient** — the USB endpoint must be hardware-reset.
+
+Also ensure the USB buffer size is set on the host (once per boot):
+
+```bash
+echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
+```
+
+### `command is failed` during recovery ramdisk generation
+
+`flash.sh` fails after `_BASE_KERNEL_VERSION=...` with a generic `command is failed` error. This is caused by a missing `ssh-keygen` command (`openssh-client` package). Rebuild with the latest Dockerfile:
+
+```bash
+git pull && make build -- -t gui
+```
