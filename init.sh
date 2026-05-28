@@ -35,9 +35,9 @@ readonly TEMPLATE_REL
 # shellcheck disable=SC1091
 source "${TEMPLATE_DIR}/script/docker/lib/gitignore.sh"
 # shellcheck disable=SC1091
-source "${TEMPLATE_DIR}/script/docker/_lib.sh"
+source "${TEMPLATE_DIR}/script/docker/lib/_lib.sh"
 
-_log() { _log_info init "$*"; }
+_log() { _log_info init init_progress "display=$*"; }
 
 # ── Symlink helper ──────────────────────────────────────────────────────────
 
@@ -57,13 +57,13 @@ _create_symlinks() {
   # Root keeps `Makefile` as the elevated user entry; flag / sub-cmd
   # forwarding is documented in script/docker/Makefile itself.
   mkdir -p script
-  _symlink "../${TEMPLATE_REL}/script/docker/build.sh" "script/build.sh"
-  _symlink "../${TEMPLATE_REL}/script/docker/run.sh" "script/run.sh"
-  _symlink "../${TEMPLATE_REL}/script/docker/exec.sh" "script/exec.sh"
-  _symlink "../${TEMPLATE_REL}/script/docker/stop.sh" "script/stop.sh"
-  _symlink "../${TEMPLATE_REL}/script/docker/prune.sh" "script/prune.sh"
-  _symlink "../${TEMPLATE_REL}/script/docker/setup.sh" "script/setup.sh"
-  _symlink "../${TEMPLATE_REL}/script/docker/setup_tui.sh" "script/setup_tui.sh"
+  _symlink "../${TEMPLATE_REL}/script/docker/wrapper/build.sh" "script/build.sh"
+  _symlink "../${TEMPLATE_REL}/script/docker/wrapper/run.sh" "script/run.sh"
+  _symlink "../${TEMPLATE_REL}/script/docker/wrapper/exec.sh" "script/exec.sh"
+  _symlink "../${TEMPLATE_REL}/script/docker/wrapper/stop.sh" "script/stop.sh"
+  _symlink "../${TEMPLATE_REL}/script/docker/wrapper/prune.sh" "script/prune.sh"
+  _symlink "../${TEMPLATE_REL}/script/docker/wrapper/setup.sh" "script/setup.sh"
+  _symlink "../${TEMPLATE_REL}/script/docker/wrapper/setup_tui.sh" "script/setup_tui.sh"
   # Migration hygiene: drop pre-#330 root *.sh symlinks (now under
   # script/) plus the pre-setup_tui-rename `tui.sh` legacy name. The
   # [[ -L X ]] guard makes the loop idempotent on already-migrated
@@ -189,17 +189,7 @@ _create_new_repo() {
 
   # script/entrypoint.sh
   mkdir -p script
-  cat > script/entrypoint.sh <<'ENTRY'
-#!/usr/bin/env bash
-# Tee container stdout/stderr to a host file when [logging] local_path
-# is set in setup.conf. No-op when local_path is unset (default), so
-# default-sourcing has zero side effect on stock repos. Helper is
-# COPY'd into the image at /usr/local/lib/base/ by Dockerfile.example's
-# devel stage (refs #364 + #368).
-. /usr/local/lib/base/_entrypoint_logging.sh
-
-exec "${@}"
-ENTRY
+  cp "${TEMPLATE_DIR}/script/docker/runtime/entrypoint.sh" script/entrypoint.sh
   chmod +x script/entrypoint.sh
   _log "  Created script/entrypoint.sh"
 
@@ -381,7 +371,7 @@ _gen_setup_conf() {
 # ── Trigger setup.sh to materialize .env + compose.yaml ─────────────────────
 
 _call_setup() {
-  local _setup="${TEMPLATE_DIR}/script/docker/setup.sh"
+  local _setup="${TEMPLATE_DIR}/script/docker/wrapper/setup.sh"
   if [[ ! -f "${_setup}" ]]; then
     _log "Skipping setup.sh (${_setup} not found)"
     return 0

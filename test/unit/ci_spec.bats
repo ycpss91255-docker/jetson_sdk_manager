@@ -9,8 +9,14 @@
 # (b) apt-get / git resolve to our mocks instead of the real binaries.
 
 setup() {
+  export LOG_FORMAT=text
   load "${BATS_TEST_DIRNAME}/test_helper"
   create_mock_dir
+  local _cmd
+  for _cmd in grep date cat printf; do
+    local _path
+    _path="$(command -v "${_cmd}" 2>/dev/null)" && ln -sf "${_path}" "${MOCK_DIR}/${_cmd}"
+  done
 }
 
 teardown() {
@@ -186,7 +192,6 @@ teardown() {
   assert_output --partial "script/ci/ci.sh"
   assert_output --partial "init.sh"
   assert_output --partial "upgrade.sh"
-  assert_output --partial "dockerfile/setup/pip/setup.sh"
   assert_output --partial "config/shell/terminator/setup.sh"
   assert_output --partial "config/shell/tmux/setup.sh"
 }
@@ -202,8 +207,8 @@ teardown() {
   '
   assert_success
 
-  # Every .sh under script/docker/ (non-recursive) must appear.
-  for _f in /source/script/docker/*.sh; do
+  # Every .sh under script/docker/wrapper/ and lib/ must appear.
+  for _f in /source/script/docker/wrapper/*.sh /source/script/docker/lib/*.sh; do
     run grep -F "${_f}" "${_log}"
     assert_success
   done
