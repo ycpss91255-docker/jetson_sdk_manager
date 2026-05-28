@@ -63,6 +63,33 @@ make build -- -t cli
 make run -- -t cli
 ```
 
+## 燒錄流程（建議）
+
+從 Docker 燒錄是**兩階段流程**。SDK Manager 內建的燒錄後 SDK 安裝依賴 NFS，在容器內無法正常運作（[已知問題](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066) — 官方 NVIDIA Docker image 也有同樣問題）。建議使用以下流程：
+
+### 階段 1 — 從 Docker 燒錄
+
+使用 SDK Manager GUI 或 CLI 燒錄基本的 Jetson Linux（L4T）OS image：
+
+```bash
+make run -- -t gui
+```
+
+在 GUI 中按正常流程操作 STEP 1–3。燒錄本身（寫入 OS 到 eMMC）會成功完成。當進度到達 **「Flashing - 99%」** 並卡住時，燒錄已經完成 — SDK Manager 是在嘗試透過 NFS 安裝 SDK 元件時卡住。可以安全關閉。
+
+> **重要：** 燒錄前 Jetson 必須處於**乾淨的 recovery mode** — 完全斷電後，按住 Recovery 按鈕再接上電源。軟體重開機到 recovery 是不夠的（見[疑難排解](#error-might-be-timeout-in-usb-write--return-value-3)）。
+
+### 階段 2 — 在 Jetson 上安裝 SDK 元件
+
+Jetson 從新燒錄的 OS 開機後，連上網路並執行：
+
+```bash
+sudo apt update
+sudo apt install nvidia-jetpack
+```
+
+這會透過 NVIDIA 官方 OTA apt repository 安裝所有 JetPack 元件（CUDA、cuDNN、TensorRT、VPI、多媒體 API、Container Runtime 等）。安裝的套件與 SDK Manager 推送的完全相同 — 只是改由 Jetson 自行從網路拉取，而非透過 NFS 推送。
+
 ## 切換 Ubuntu 版本
 
 容器內的 Ubuntu 版本必須符合 JetPack 的 host OS 要求：
@@ -423,3 +450,33 @@ echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
 ```bash
 git pull && make build -- -t gui
 ```
+
+### `Error: Error opening /dev/sda: No medium found`（SD card / USB flash）
+
+`l4t_initrd_flash.sh` 回報外部儲存裝置為空，但 microSD 卡實際上有插在 USB 讀卡機中。常見於**多 slot 複合讀卡機**，每個 slot 對應到獨立的 LUN：
+
+```bash
+$ lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN
+sda    0B  Generic-  SD/MMC          usb     # 空的 SD/MMC slot
+sdb  117.8G Generic-  Micro SD/M2    usb     # microSD 卡實際在這
+```
+
+預設 `--external-device sda1` 會開到空的 slot。解決方法：
+
+1. **把卡換到對應 `/dev/sda` 的 slot**（若需要可用 microSD-to-SD 轉接卡）
+2. **使用單 slot 讀卡機** — 只有 microSD slot 的讀卡機固定 enumerate 為 `sda`
+3. **燒錄前先在 host 確認**：
+
+   ```bash
+   lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN
+   ```
+
+### `Flash failure`（APP partition 寫入階段，外部儲存）
+
+燒錄 rootfs 到 SD 卡或 USB drive 時，bootloader partition 寫入成功，但卡在 **APP partition** 解壓階段，約 12 分鐘後 timeout 失敗。原因是 USB ethernet 在持續大量資料傳輸時的頻寬限制。
+
+解決方法：
+
+1. **改用 eMMC + apt**（推薦）— `flash.sh ... internal` 燒錄 OS，然後在 Jetson 上 `sudo apt install nvidia-jetpack` 安裝 SDK 元件
+2. **改用 NVMe SSD** — 直接 PCIe 寫入比 USB ethernet 解壓快
+3. **斷電重進 recovery 後重試** — 有時 USB 卡頓會在新的 recovery boot 後清除
