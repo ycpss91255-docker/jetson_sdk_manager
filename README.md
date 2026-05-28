@@ -63,6 +63,33 @@ make build -- -t cli
 make run -- -t cli
 ```
 
+## Flash Workflow (Recommended)
+
+Flashing from Docker is a **two-phase process**. SDK Manager's built-in post-flash SDK installation relies on NFS, which does not work reliably inside containers ([known issue](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066) — affects official NVIDIA Docker image too). Use the following workflow instead:
+
+### Phase 1 — Flash from Docker
+
+Flash the base Jetson Linux (L4T) OS image using SDK Manager GUI or CLI:
+
+```bash
+make run -- -t gui
+```
+
+In the GUI, proceed through STEP 1–3 as normal. The flash itself (writing the OS to eMMC) will complete successfully. When it reaches **"Flashing - 99%"** and stalls, the flash is already done — SDK Manager is stuck trying to install SDK components via NFS. You can safely close it.
+
+> **Important:** Before flashing, the Jetson must be in **clean recovery mode** — fully power off, hold Recovery button, reconnect power. A software reboot to recovery is not sufficient (see [Troubleshooting](#error-might-be-timeout-in-usb-write--return-value-3)).
+
+### Phase 2 — Install SDK components on Jetson
+
+After the Jetson boots up from the freshly flashed OS, connect it to the network and run:
+
+```bash
+sudo apt update
+sudo apt install nvidia-jetpack
+```
+
+This installs all JetPack components (CUDA, cuDNN, TensorRT, VPI, multimedia APIs, container runtime, etc.) via NVIDIA's official OTA apt repository. It is the same set of packages that SDK Manager would push — just pulled directly by the Jetson instead of pushed via NFS.
+
 ## Switch Ubuntu Version
 
 The container's Ubuntu version must match the JetPack host OS requirement:
@@ -423,3 +450,33 @@ echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
 ```bash
 git pull && make build -- -t gui
 ```
+
+### `Error: Error opening /dev/sda: No medium found` (SD card / USB flash)
+
+`l4t_initrd_flash.sh` reports the external storage device is empty even though the microSD card is physically inserted in the USB reader. This happens with **multi-slot combo readers** that expose each slot as a separate LUN:
+
+```bash
+$ lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN
+sda    0B  Generic-  SD/MMC          usb     # empty SD/MMC slot
+sdb  117.8G Generic-  Micro SD/M2    usb     # microSD card actually here
+```
+
+The default `--external-device sda1` opens the empty slot. Solutions:
+
+1. **Move the card to the slot mapped to `/dev/sda`** (use a microSD-to-SD adapter if needed)
+2. **Use a single-slot reader** — microSD-only readers always enumerate as `sda`
+3. **Verify on host first** before flashing:
+
+   ```bash
+   lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN
+   ```
+
+### `Flash failure` during APP partition write (external storage)
+
+When flashing rootfs to SD card or USB drive, the flash succeeds for bootloader partitions but hangs at the **APP partition** extraction step, eventually failing after a ~12-minute timeout. This is caused by USB ethernet bandwidth limits during sustained large transfers.
+
+Workarounds:
+
+1. **Use eMMC + apt** (recommended) — `flash.sh ... internal` for OS, then `sudo apt install nvidia-jetpack` on the Jetson for SDK components
+2. **Use NVMe SSD** — direct PCIe write is faster than USB ethernet extraction
+3. **Retry with a power-cycled Jetson** — sometimes USB stalls clear after a fresh recovery boot
