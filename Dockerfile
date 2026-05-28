@@ -122,12 +122,14 @@ RUN . /etc/os-release && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         sdkmanager \
-        abootimg binfmt-support binutils cpio cpp \
-        device-tree-compiler dosfstools file gdisk \
-        iproute2 iputils-ping lbzip2 libxml2-utils lz4 \
-        netcat-openbsd nfs-kernel-server openssh-client openssl \
-        parted python3-yaml python-is-python3 qemu-user-static rsync sshpass \
-        udev usbutils uuid-runtime whois xmlstarlet xxd zstd zlib1g && \
+        abootimg android-sdk-libsparse-utils bc binfmt-support \
+        binutils cpio cpp cryptsetup device-tree-compiler \
+        dmsetup dosfstools file gdisk iproute2 iputils-ping \
+        kpartx lbzip2 libxml2-utils lz4 netcat-openbsd \
+        nfs-kernel-server openssh-client openssl parted pigz \
+        pv python3-yaml python-is-python3 qemu-user-static \
+        rsync sshpass udev usbutils uuid-runtime whois \
+        xmlstarlet xxd zstd zlib1g && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
     grep -q '^root' /etc/sudoers || echo "root ALL=(ALL:ALL) ALL" >> /etc/sudoers

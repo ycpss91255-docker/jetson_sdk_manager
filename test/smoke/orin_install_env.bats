@@ -46,3 +46,15 @@ setup() {
 @test "ssh-keygen is installed" {
   assert_cmd_installed ssh-keygen
 }
+
+@test "simg2img is installed (NVMe/USB flash)" {
+  assert_cmd_installed simg2img
+}
+
+@test "pv is installed (flash progress)" {
+  assert_cmd_installed pv
+}
+
+@test "kpartx is installed (partition mapping)" {
+  assert_cmd_installed kpartx
+}
