@@ -58,3 +58,7 @@ setup() {
 @test "kpartx is installed (partition mapping)" {
   assert_cmd_installed kpartx
 }
+
+@test "wget is installed (BSP/rootfs tarball download)" {
+  assert_cmd_installed wget
+}

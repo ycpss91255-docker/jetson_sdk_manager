@@ -1,0 +1,17 @@
+# Orin Nano devkit (Super) — flash to M.2 NVMe SSD.
+# See _example.yaml for the canonical schema with all options.
+
+jetpack:
+  version: "6.2.2"
+
+hardware:
+  board: orin-nano
+
+storage:
+  device: nvme
+
+user:
+  username: jetson
+  password: jetson
+  hostname: jetson-orin-nano
+  autologin: false

@@ -213,7 +213,15 @@ COPY .base/script/docker/wrapper /lint/wrapper
 # (see the commented example in the devel stage above); the COPY brings
 # them into /lint/ so ShellCheck catches issues at build time.
 #COPY script/docker/*.sh /lint/
-RUN shellcheck -S warning /lint/wrapper/*.sh /lint/lib/*.sh
+# Repo-local runtime scripts (prepare/flash/clean + lib/) — separate
+# COPY to preserve the script/lib/ subdir for source-path resolution.
+COPY script/lib /lint/script_lib
+RUN shellcheck -S warning /lint/wrapper/*.sh /lint/lib/*.sh && \
+    shellcheck -S warning \
+        /lint/prepare.sh /lint/flash.sh /lint/clean.sh \
+        /lint/sdkm-cli.sh /lint/flash-build.sh /lint/flash-only.sh \
+        /lint/init_data_dirs.sh /lint/entrypoint.sh \
+        /lint/script_lib/*.sh
 WORKDIR /lint
 RUN hadolint Dockerfile
 
@@ -270,3 +278,61 @@ CMD ["/opt/nvidia/sdkmanager/sdkmanager-gui", "--no-sandbox"]
 FROM gui AS gui-test
 
 RUN sdkmanager --ver
+
+############################## prepare ##############################
+# Phase 1 of the NVIDIA factory flash workflow. Reads /etc/jetson.yaml
+# (bind-mounted from the repo's jetson.yaml symlink at runtime) and
+# writes flash images to the jetson_l4t Docker volume. No Jetson
+# needed. See script/prepare.sh + doc/Flash_Workflow.md.
+#
+# Build-time COPY of _l4t_mapping.yaml — keeps the prepare image
+# self-contained at runtime (the user-editable jetson.yaml is the only
+# bind mount). When NVIDIA adds a new JetPack release, update
+# config/jetson/_l4t_mapping.yaml in this repo, commit, and rebuild.
+FROM devel AS prepare
+
+USER root
+
+# yq for yaml parsing in script/lib/yaml.sh. Other tools (lbzip2, tar,
+# wget, sudo, openssh-client, etc.) already in devel.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        yq \
+        && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --chmod=0644 config/jetson/_l4t_mapping.yaml /etc/jetson/_l4t_mapping.yaml
+# Co-locate the entry script with its lib/ siblings — script/prepare.sh
+# sources script/lib/*.sh via a relative `${BASH_SOURCE[0]}` lookup.
+COPY --chmod=0755 script/prepare.sh /opt/jetson_install/prepare.sh
+COPY --chmod=0755 script/lib /opt/jetson_install/lib
+
+ARG USER
+USER "${USER}"
+
+CMD ["/opt/jetson_install/prepare.sh"]
+
+############################## flash ##############################
+# Phase 2: write the volume's pre-generated images to a Jetson in APX
+# recovery. Requires Jetson connected over USB device-mode. See
+# script/flash.sh + doc/Flash_Workflow.md.
+FROM devel AS flash
+
+USER root
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        yq \
+        && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --chmod=0644 config/jetson/_l4t_mapping.yaml /etc/jetson/_l4t_mapping.yaml
+COPY --chmod=0755 script/flash.sh /opt/jetson_install/flash.sh
+COPY --chmod=0755 script/lib /opt/jetson_install/lib
+
+ARG USER
+USER "${USER}"
+
+CMD ["/opt/jetson_install/flash.sh"]

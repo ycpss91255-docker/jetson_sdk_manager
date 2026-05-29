@@ -1,0 +1,61 @@
+# Jetson flash configuration — reference for all supported keys.
+#
+# This file is the canonical schema. Copy one of the board variants in
+# this directory (or use this file as a starting point), edit, then
+# symlink it from the repo root:
+#
+#   ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml
+#   make run -- -t prepare
+#
+# `prepare` reads /etc/jetson.yaml (bind-mounted from the symlink) and
+# writes flash images to a Docker named volume. `flash` reads the same
+# config and writes the volume's images to the connected Jetson.
+
+# ─── jetpack (REQUIRED) ────────────────────────────────────────────────
+# JetPack release tag. Internal `_l4t_mapping.yaml` resolves this to an
+# L4T release version + the BSP / sample-rootfs download URLs.
+# Supported values: see top-level keys in `_l4t_mapping.yaml`.
+jetpack:
+  version: "6.2.2"
+
+# ─── hardware (REQUIRED) ───────────────────────────────────────────────
+# Board alias. Resolved to the NVIDIA-canonical `--target` name via
+# `_l4t_mapping.yaml::board_alias_to_target`.
+#
+# Supported aliases:
+#   agx-orin   → jetson-agx-orin-devkit
+#   orin-nx    → jetson-orin-nx-devkit-super
+#   orin-nano  → jetson-orin-nano-devkit-super
+hardware:
+  board: agx-orin
+
+# ─── storage (REQUIRED) ────────────────────────────────────────────────
+# Target storage device. Resolved to the kernel device path via
+# `_l4t_mapping.yaml::storage_alias_to_device`.
+#
+# Supported aliases:
+#   emmc → mmcblk0p1   (internal eMMC; AGX Orin devkit default)
+#   nvme → nvme0n1p1   (M.2 NVMe SSD)
+#   usb  → sda1        (USB-attached SSD or microSD-via-reader)
+storage:
+  device: emmc
+
+# ─── user (REQUIRED) ───────────────────────────────────────────────────
+# Pre-creates the default user so first boot skips OEM-config.
+# Equivalent to running `l4t_create_default_user.sh` with these args.
+user:
+  username: jetson
+  password: jetson
+  hostname: jetson-agx
+  autologin: false  # true: pre-login at boot; false: prompt at gdm.
+
+# ─── network (OPTIONAL) ────────────────────────────────────────────────
+# Pre-configures NetworkManager on the rootfs. Omit this section
+# entirely to let the user configure networking from the desktop on
+# first boot (DHCP via NetworkManager default profile).
+#network:
+#  method: dhcp           # dhcp | static
+#  static:                # Read ONLY when method=static.
+#    address: 192.168.1.100/24
+#    gateway: 192.168.1.1
+#    dns: [8.8.8.8, 1.1.1.1]

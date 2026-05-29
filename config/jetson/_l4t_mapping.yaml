@@ -1,0 +1,37 @@
+# JetPack/board/storage alias → NVIDIA-canonical name mapping.
+#
+# This file is COPY'd into the image at build time (NOT bind-mounted at
+# runtime) so the prepare/flash images are self-contained — the user's
+# editable `jetson.yaml` only references aliases, never URLs.
+#
+# Adding a new JetPack release:
+#   1. Confirm L4T release + download URLs on
+#      https://developer.nvidia.com/embedded/jetson-linux-archive
+#   2. Append a new key under `jetpack_to_l4t`
+#   3. Commit + tag a downstream release so users get the new option
+#      via `git pull && make build`
+#
+# Adding a new board:
+#   1. Confirm the canonical `--target` name in NVIDIA's BSP docs
+#      (look for valid arguments to `l4t_initrd_flash.sh --target`)
+#   2. Append a new key under `board_alias_to_target`
+#   3. Add a sample `<alias>-<storage>.yaml` variant in this directory
+
+jetpack_to_l4t:
+  "6.2.2":
+    l4t_release: R36.5.0
+    l4t_archive_tag: r36_release_v5.0
+    bsp_url: https://developer.nvidia.com/downloads/embedded/l4t/r36_release_v5.0/release/Jetson_Linux_r36.5.0_aarch64.tbz2
+    rootfs_url: https://developer.nvidia.com/downloads/embedded/l4t/r36_release_v5.0/release/Tegra_Linux_Sample-Root-Filesystem_r36.5.0_aarch64.tbz2
+
+board_alias_to_target:
+  agx-orin: jetson-agx-orin-devkit
+  orin-nx: jetson-orin-nx-devkit-super
+  orin-nano: jetson-orin-nano-devkit-super
+
+# `--storage` argument to `l4t_initrd_flash.sh`. Names match the kernel
+# device path the Jetson exposes to user space at first boot.
+storage_alias_to_device:
+  emmc: mmcblk0p1
+  nvme: nvme0n1p1
+  usb: sda1
