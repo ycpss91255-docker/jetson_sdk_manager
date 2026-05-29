@@ -1,13 +1,14 @@
-# Dockerfile - Jetson SDK Manager dev container
+# Dockerfile - Jetson factory-flash dev container
 #
 # Stages:
-#   sys           - User/group, locale, timezone
-#   devel-base    - Development tools and packages
-#   devel         - SDK Manager install + entrypoint
-#   devel-test    - Lint + bats smoke test (ephemeral)
-#   cli           - CLI entrypoint variant
-#   gui           - GUI entrypoint variant (+ X11 client libs)
-#   gui-test      - GUI dependency smoke test (ephemeral)
+#   sys             - User/group, locale, timezone
+#   devel-base      - Development tools and packages
+#   devel           - Flash tooling (l4t_initrd_flash deps) + entrypoint
+#   devel-test      - Lint + bats smoke test (ephemeral)
+#   prepare         - NVIDIA factory flash phase 1 (host-side image build)
+#   flash           - NVIDIA factory flash phase 2 (write to Jetson over USB)
+#   inspector       - SDK Manager GUI for catalog browsing (NOT flashing)
+#   inspector-test  - inspector sanity check (ephemeral)
 
 ARG BASE_IMAGE="ubuntu:22.04"
 ARG TEST_TOOLS_IMAGE="test-tools:local"
@@ -103,15 +104,13 @@ ARG CONFIG_SRC="config"
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# hadolint ignore=DL4006,SC1091
-RUN . /etc/os-release && \
-    UBUNTU_VER=$(echo "${VERSION_ID}" | tr -d '.') && \
-    wget -q "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${UBUNTU_VER}/x86_64/cuda-keyring_1.1-1_all.deb" && \
-    dpkg -i cuda-keyring_1.1-1_all.deb && \
-    rm cuda-keyring_1.1-1_all.deb && \
-    apt-get update && \
+# Flash prerequisites for prepare.sh / flash.sh
+# (tools/kernel_flash/l4t_initrd_flash.sh). The CUDA repo + sdkmanager
+# install moved to the inspector stage -- the production flash flow
+# uses the factory workflow (prepare + flash stages) and no longer
+# depends on SDK Manager at the devel layer.
+RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        sdkmanager \
         abootimg android-sdk-libsparse-utils bc binfmt-support \
         binutils cpio cpp cryptsetup device-tree-compiler \
         dmsetup dosfstools file gdisk iproute2 iputils-ping \
@@ -123,6 +122,17 @@ RUN . /etc/os-release && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
     grep -q '^root' /etc/sudoers || echo "root ALL=(ALL:ALL) ALL" >> /etc/sudoers
+
+# mikefarah/yq -- the Go binary, not the Python kislyuk/yq wrapper.
+# script/lib/yaml.sh + script/lib/volume.sh rely on `yq -i` (in-place
+# edit) which only the Go version supports. Jammy/Noble apt repos
+# don't ship it, so pin a release and grab the static binary directly.
+ARG YQ_VERSION="v4.44.3"
+ARG TARGETARCH="amd64"
+RUN wget -q "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH}" \
+        -O /usr/local/bin/yq && \
+    chmod 0755 /usr/local/bin/yq && \
+    yq --version
 
 COPY --chmod=0755 "./${ENTRYPOINT_FILE}" "/entrypoint.sh"
 # Host-side log tee helper (#328 / #368). Source from
@@ -219,6 +229,7 @@ COPY script/lib /lint/script_lib
 RUN shellcheck -S warning /lint/wrapper/*.sh /lint/lib/*.sh && \
     shellcheck -S warning \
         /lint/prepare.sh /lint/flash.sh /lint/clean.sh \
+        /lint/inspector-entrypoint.sh \
         /lint/sdkm-cli.sh /lint/flash-build.sh /lint/flash-only.sh \
         /lint/init_data_dirs.sh /lint/entrypoint.sh \
         /lint/script_lib/*.sh
@@ -241,20 +252,38 @@ USER "${USER}"
 
 RUN bats /smoke_test/
 
-############################## cli ##############################
-FROM devel AS cli
-
-CMD ["sdkmanager", "--cli"]
-
-############################## gui ##############################
-FROM devel AS gui
+############################## inspector ##############################
+# SDK Manager GUI for browsing the JetPack component catalog and
+# downloading individual .deb packages. NOT for flashing -- the GUI's
+# Install button is fundamentally broken inside Docker (NFS server,
+# iptables, USB device-mode forwarding all fail even with
+# --privileged --network host). The production flash path uses the
+# prepare + flash stages below; inspector-entrypoint.sh prints a
+# warning banner explaining this before launching the GUI.
+FROM devel AS inspector
 
 USER root
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+# CUDA repo + SDK Manager itself. yq for /etc/jetson.yaml lookup is
+# already in devel (see the GitHub-release install there).
+# hadolint ignore=DL4006,SC1091
+RUN . /etc/os-release && \
+    UBUNTU_VER=$(echo "${VERSION_ID}" | tr -d '.') && \
+    wget -q "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${UBUNTU_VER}/x86_64/cuda-keyring_1.1-1_all.deb" && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && \
+    rm cuda-keyring_1.1-1_all.deb && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        sdkmanager \
+        && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY config/packages/ /tmp/packages/
 
+# X11 / GUI client libs from the per-distro list.
 # hadolint ignore=DL4006,SC2046
 RUN . /etc/os-release && \
     pkg_list="/tmp/packages/${VERSION_CODENAME}.txt" && \
@@ -269,13 +298,15 @@ RUN . /etc/os-release && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/packages/
 
+COPY --chmod=0755 script/inspector-entrypoint.sh /usr/local/bin/inspector-entrypoint.sh
+
 ARG USER
 USER "${USER}"
 
-CMD ["/opt/nvidia/sdkmanager/sdkmanager-gui", "--no-sandbox"]
+CMD ["/usr/local/bin/inspector-entrypoint.sh"]
 
-############################## gui-test ##############################
-FROM gui AS gui-test
+############################## inspector-test ##############################
+FROM inspector AS inspector-test
 
 RUN sdkmanager --ver
 
@@ -293,15 +324,8 @@ FROM devel AS prepare
 
 USER root
 
-# yq for yaml parsing in script/lib/yaml.sh. Other tools (lbzip2, tar,
-# wget, sudo, openssh-client, etc.) already in devel.
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        yq \
-        && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
+# Tools (yq, lbzip2, tar, wget, sudo, openssh-client, etc.) already
+# in devel. This stage layers in only the YAML mapping + entry script.
 COPY --chmod=0644 config/jetson/_l4t_mapping.yaml /etc/jetson/_l4t_mapping.yaml
 # Co-locate the entry script with its lib/ siblings — script/prepare.sh
 # sources script/lib/*.sh via a relative `${BASH_SOURCE[0]}` lookup.
@@ -321,13 +345,8 @@ FROM devel AS flash
 
 USER root
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        yq \
-        && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
+# yq already in devel. This stage layers in only the YAML mapping
+# + entry script.
 COPY --chmod=0644 config/jetson/_l4t_mapping.yaml /etc/jetson/_l4t_mapping.yaml
 COPY --chmod=0755 script/flash.sh /opt/jetson_install/flash.sh
 COPY --chmod=0755 script/lib /opt/jetson_install/lib
