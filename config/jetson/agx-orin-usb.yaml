@@ -1,0 +1,17 @@
+# AGX Orin devkit — flash to USB-attached storage (SSD or microSD via reader).
+# See _example.yaml for the canonical schema with all options.
+
+jetpack:
+  version: "6.2.2"
+
+hardware:
+  board: agx-orin
+
+storage:
+  device: usb
+
+user:
+  username: jetson
+  password: jetson
+  hostname: jetson-agx
+  autologin: false

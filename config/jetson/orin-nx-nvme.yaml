@@ -1,0 +1,17 @@
+# Orin NX devkit (Super) — flash to M.2 NVMe SSD (typical).
+# See _example.yaml for the canonical schema with all options.
+
+jetpack:
+  version: "6.2.2"
+
+hardware:
+  board: orin-nx
+
+storage:
+  device: nvme
+
+user:
+  username: jetson
+  password: jetson
+  hostname: jetson-orin-nx
+  autologin: false

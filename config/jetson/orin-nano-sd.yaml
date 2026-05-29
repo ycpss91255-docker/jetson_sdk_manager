@@ -1,0 +1,23 @@
+# Orin Nano devkit (Super) — flash to USB-attached microSD via reader.
+#
+# Direct SD-slot flashing is not supported by l4t_initrd_flash (the SD
+# slot is initramfs-readonly during recovery). Use a USB SD-card reader
+# from the host instead — Jetson boots eMMC bootloader, then reads
+# rootfs from SD on first boot.
+#
+# See _example.yaml for the canonical schema with all options.
+
+jetpack:
+  version: "6.2.2"
+
+hardware:
+  board: orin-nano
+
+storage:
+  device: usb
+
+user:
+  username: jetson
+  password: jetson
+  hostname: jetson-orin-nano
+  autologin: false
