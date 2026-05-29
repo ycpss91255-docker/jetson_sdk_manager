@@ -1,8 +1,8 @@
-# Jetson SDK Manager Docker Environment
+# Jetson Orin 工廠燒錄容器
 
 [![CI](https://github.com/ycpss91255-docker/jetson_sdk_manager/actions/workflows/main.yaml/badge.svg)](https://github.com/ycpss91255-docker/jetson_sdk_manager/actions/workflows/main.yaml) [![License](https://img.shields.io/badge/License-Apache--2.0-blue?style=flat-square)](../LICENSE)
 
-容器化 NVIDIA SDK Manager，用於燒錄與配置 Jetson Orin 系列裝置（AGX Orin、Orin NX、Orin Nano）。提供 CLI 與 GUI 兩種 variant，以 `ubuntu:${BASE_IMAGE}` 為 base，透過公開的 CUDA apt repo 安裝 SDK Manager。建構於 [`ycpss91255-docker/base`](https://github.com/ycpss91255-docker/base) 之上。
+容器化的 NVIDIA Jetson Linux（L4T）工廠燒錄流程，支援 Jetson Orin 系列裝置（AGX Orin、Orin NX、Orin Nano）。將官方 BSP archive 中的 `l4t_initrd_flash.sh --no-flash` / `--flash-only` 包裝為兩個可重現的 Docker stage。建構於 [`ycpss91255-docker/base`](https://github.com/ycpss91255-docker/base) 之上。
 
 **[English](../README.md)** | **[繁體中文](README.zh-TW.md)** | **[简体中文](README.zh-CN.md)** | **[日本語](README.ja.md)**
 
@@ -11,277 +11,201 @@
 ## 目錄
 
 - [TL;DR](#tldr)
+- [為什麼用工廠燒錄而非 SDK Manager](#為什麼用工廠燒錄而非-sdk-manager)
 - [前置需求](#前置需求)
+- [設定 `jetson.yaml`](#設定-jetsonyaml)
 - [快速開始](#快速開始)
-- [切換 Ubuntu 版本](#切換-ubuntu-版本)
-- [使用方式](#使用方式)
+- [Stages](#stages)
+- [Clean 指令](#clean-指令)
+- [Inspector（SDK Manager GUI）](#inspectorsdk-manager-gui)
 - [持久化資料](#持久化資料)
 - [架構](#架構)
 - [Smoke Tests](#smoke-tests)
 - [目錄結構](#目錄結構)
+- [疑難排解](#疑難排解)
 
 ---
 
 ## TL;DR
 
 ```bash
-make build && make run -- -t cli
+ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # 選一個 preset
+
+make run -- -t prepare    # 階段 1：下載 BSP + 產生燒錄 image（約 30 分鐘）
+# 將 Jetson 進入 APX recovery（按住 REC + 點 RESET）
+make run -- -t flash      # 階段 2：寫入 Jetson（約 10 分鐘）
 ```
+
+Jetson 首次開機後，於裝置上安裝 JetPack 元件：
+
+```bash
+sudo apt update && sudo apt install -y nvidia-jetpack
+```
+
+## 為什麼用工廠燒錄而非 SDK Manager
+
+NVIDIA SDK Manager 的 GUI 與 `--cli` 流程，是透過在 host 上跑 NFS server、將 rootfs 經由 USB device-mode 匯出至裝置，並使用 `iptables` 橋接 host 網路堆疊來完成燒錄。在 Docker 內（即使加上 `--privileged --network host`）這個組合無法可靠運作：NFS server 綁定不穩、容器內 `iptables` 規則不一定能影響 host nftables、`usb-gadget` device-mode forwarding 失敗。典型症狀就是 [Flashing - 99% 卡死](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066)，NVIDIA 官方 Docker image 也有同樣問題。
+
+本 repo 直接繞過此路徑：**prepare** stage 使用 BSP 自帶的 `l4t_initrd_flash.sh --no-flash` 於 host 端產生燒錄 image（不需 Jetson、不需 NFS、不需 `iptables`）；**flash** stage 再透過單純的 `tegrarcm_v2` USB 連線以 `--flash-only` 寫入。
+
+SDK Manager 仍保留於 **`inspector`** stage，用途是瀏覽 JetPack 的元件目錄、查詢有哪些 `.deb` 套件。其 Install 按鈕在 Docker 內仍然失效；entrypoint 會印 banner 提醒這點。
 
 ## 前置需求
 
-- **Host OS**：x86_64 Linux
-- **Docker Engine** >= v20.10.6
-- **QEMU binfmt**（x86 host 燒錄 ARM target 必須）：
+- **Host OS**：x86_64 Linux。
+- **Docker Engine** >= v20.10.6。
+- **Repo 所在的 host 檔案系統須為 ext4 / xfs / btrfs。** `apply_binaries.sh` 會在 rootfs 樹中產生 setuid binary（`sudo`）和 root 擁有的檔案。NTFS / exFAT / `fuseblk` / FAT 會在解壓時靜默丟掉 setuid 與 ownership，燒錄完成的 Jetson 開機後 `sudo` 拒絕啟動。`prepare.sh` 偵測到非 unix FS 會以 action 訊息中止；請將 repo 移到 ext4 / xfs / btrfs 分割區，或 bind-mount 一個 ext4 目錄覆蓋 `./data/jetson_l4t/`。
+- **QEMU binfmt** — prepare 階段執行 BSP 中的 ARM64 工具需要：
 
   ```bash
   docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
   ```
 
-  > 每次開機後執行一次即可。透過 Docker 註冊 ARM64 binary 翻譯至 kernel，不需安裝 host 套件。
+  每次開機後執行一次。透過 Docker 註冊 ARM64 翻譯至 kernel，不需安裝 host 套件。
 
-- **USB auto-suspend**：連接 Jetson 的 USB port 必須關閉 auto-suspend，否則燒錄可能卡住
+- **USB host buffer** — `tegrarcm_v2` bulk write 偶爾會卡在預設的 16 MB。每次開機調整一次：
 
   ```bash
-  # 檢查當前設定
-  cat /sys/bus/usb/devices/*/power/autosuspend
-  # 對特定裝置關閉（範例）
-  echo -1 | sudo tee /sys/bus/usb/devices/<device>/power/autosuspend
+  echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
   ```
 
-- **Jetson 裝置**須進入 recovery mode（燒錄時）
+- **USB auto-suspend** — 連接 Jetson 的 port 必須關閉 auto-suspend，否則燒錄可能卡住。
+- **Jetson 進入 APX recovery**（僅 `flash` 階段需要；`prepare` 不需連 Jetson）。
+
+## 設定 `jetson.yaml`
+
+頂層的 `jetson.yaml` 是指向 `config/jetson/` 下某個 preset 的 symlink。挑一個符合你的 board + 儲存目標：
+
+| Preset | 板子 | 儲存 |
+|---|---|---|
+| `agx-orin-emmc.yaml` | AGX Orin devkit | eMMC (`mmcblk0p1`) |
+| `agx-orin-nvme.yaml` | AGX Orin devkit | NVMe (`nvme0n1p1`) |
+| `agx-orin-usb.yaml` | AGX Orin devkit | USB SSD (`sda1`) |
+| `orin-nx-nvme.yaml` | Orin NX devkit-super | NVMe |
+| `orin-nano-nvme.yaml` | Orin Nano devkit-super | NVMe |
+| `orin-nano-sd.yaml` | Orin Nano devkit-super | microSD（透過 USB reader） |
+
+切換 preset 重新建立 symlink 即可：
+
+```bash
+ln -sf config/jetson/orin-nx-nvme.yaml jetson.yaml
+```
+
+每個 preset 設定：
+
+- `jetpack.version` — 透過 `config/jetson/_l4t_mapping.yaml` 解析為 L4T release 版本及 BSP / rootfs 下載 URL。
+- `hardware.board` — alias 對應到 NVIDIA `--target` 名稱。
+- `storage.device` — alias 對應到傳入 `--external-device` 的 kernel device 路徑。
+- `user.{username,password,hostname,autologin}` — 透過 `l4t_create_default_user.sh` 預先建立預設 user，首次開機跳過 OEM-config。
+- `network`（選用）— 預設 DHCP；設定 `method: static` 會在 rootfs 內安裝 `NetworkManager` system-connection profile。
+
+完整 schema 與註解見 `config/jetson/_example.yaml`。
+
+**要新增 JetPack 版本**：編輯 `config/jetson/_l4t_mapping.yaml`，在 `jetpack_to_l4t` 下新增條目（從 [Jetson Linux Archive](https://developer.nvidia.com/embedded/jetson-linux-archive) 取得 `l4t_release` 及 `bsp_url` / `rootfs_url`），然後重建 prepare / flash image。
 
 ## 快速開始
 
-> **首次使用：** 在 `make run` 之前先執行 `./script/init_data_dirs.sh`。略過此步驟會讓 Docker daemon 以 **root** 建立 `data/` 掛載目錄，容器內的非 root 使用者將無法存取。
+> **首次使用：** 在 `make run` 之前先執行 `./script/init_data_dirs.sh`。略過此步驟會讓 Docker daemon 以 root 建立 `data/` 掛載目錄，容器內的非 root 使用者將無法存取。
 
 ```bash
-./script/init_data_dirs.sh        # 首次使用 — 建立 data/{nvsdkm,downloads}
-make build -- -t cli
+./script/init_data_dirs.sh
+ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml
 
-# 把 Jetson 進入 recovery mode（按住 REC 按鈕 + 重新上電）
-make run -- -t cli
+# 階段 1 — host 端產生 image（不需連 Jetson）
+make build -- -t prepare
+make run -- -t prepare
+
+# 階段 2 — 寫入 Jetson
+# Jetson 進入 APX recovery：斷電、按住 REC、接電、放開。
+# 在 host 驗證：`lsusb | grep 0955` 應出現如 0955:7023 NVIDIA Corp APX
+make build -- -t flash
+make run -- -t flash
 ```
 
-## 燒錄流程（建議）
-
-從 Docker 燒錄是**兩階段流程**。SDK Manager 內建的燒錄後 SDK 安裝依賴 NFS，在容器內無法正常運作（[已知問題](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066) — 官方 NVIDIA Docker image 也有同樣問題）。建議使用以下流程：
-
-### 階段 1 — 從 Docker 燒錄
-
-使用 SDK Manager GUI 或 CLI 燒錄基本的 Jetson Linux（L4T）OS image：
-
-```bash
-make run -- -t gui
-```
-
-在 GUI 中按正常流程操作 STEP 1–3。燒錄本身（寫入 OS 到 eMMC）會成功完成。當進度到達 **「Flashing - 99%」** 並卡住時，燒錄已經完成 — SDK Manager 是在嘗試透過 NFS 安裝 SDK 元件時卡住。可以安全關閉。
-
-> **重要：** 燒錄前 Jetson 必須處於**乾淨的 recovery mode** — 完全斷電後，按住 Recovery 按鈕再接上電源。軟體重開機到 recovery 是不夠的（見[疑難排解](#error-might-be-timeout-in-usb-write--return-value-3)）。
-
-### 階段 2 — 在 Jetson 上安裝 SDK 元件
-
-Jetson 從新燒錄的 OS 開機後，連上網路並執行：
+Jetson 從新燒錄的 OS 開機後，從 NVIDIA OTA apt repository 安裝 JetPack 其他元件：
 
 ```bash
 sudo apt update
-sudo apt install nvidia-jetpack
+sudo apt install -y nvidia-jetpack
 ```
 
-這會透過 NVIDIA 官方 OTA apt repository 安裝所有 JetPack 元件（CUDA、cuDNN、TensorRT、VPI、多媒體 API、Container Runtime 等）。安裝的套件與 SDK Manager 推送的完全相同 — 只是改由 Jetson 自行從網路拉取，而非透過 NFS 推送。
+安裝 CUDA、cuDNN、TensorRT、VPI、多媒體 API、container runtime 等。與 SDK Manager 推送的套件集相同，只是改由 Jetson 自行拉取。
 
-## 切換 Ubuntu 版本
+### 中斷後續跑
 
-容器內的 Ubuntu 版本必須符合 JetPack 的 host OS 要求：
+每個階段會將進度記錄在 `data/jetson_l4t/.../.prepared.yaml`。重新執行 `make run -- -t prepare` 會略過已完成步驟（BSP 下載、rootfs 解壓、`apply_binaries.sh`、user 建立、image 產生）。若 JetPack / board 改變，會被偵測為 mismatch 並以 action 訊息中止，提示執行 `./script/clean.sh l4t`。
 
-| JetPack | L4T | Host Ubuntu（容器 `BASE_IMAGE`） |
-|---------|-----|----------------------------------|
-| 6.x | R36.x | **22.04** 或 20.04 |
-| 5.x | R35.x | 20.04 或 18.04 |
+## Stages
 
-預設為 `ubuntu:22.04`（相容 JetPack 6.x）。切換其他版本：
+| Stage | 用途 | 需連 Jetson |
+|---|---|---|
+| `devel` | 燒錄工具（`l4t_initrd_flash.sh` 依賴）。`make build` 預設 target。 | 否 |
+| `devel-test` | Lint（`shellcheck` + `hadolint`）+ bats smoke tests。僅 CI。 | 否 |
+| `prepare` | 階段 1 — 下載 BSP + sample rootfs、`apply_binaries.sh`、`l4t_create_default_user.sh`、`l4t_initrd_flash --no-flash`。 | 否 |
+| `flash` | 階段 2 — `l4t_initrd_flash --flash-only`。 | **是**，APX recovery |
+| `inspector` | SDK Manager GUI，用於瀏覽 JetPack 元件目錄。Install 按鈕在 Docker 內無作用 — 見 [Inspector](#inspectorsdk-manager-gui)。 | 否 |
+| `inspector-test` | `sdkmanager --ver` sanity check。僅 CI。 | 否 |
+
+## Clean 指令
+
+`script/clean.sh` 透過一次性 `alpine:3` 容器操作 `./data/jetson_l4t/`，不需 host 端工具。
+
+| 指令 | 效果 |
+|---|---|
+| `./script/clean.sh build` | 只移除產生的燒錄 image（`tools/kernel_flash/images/`）。 |
+| `./script/clean.sh rootfs` | 只移除 `rootfs/`，保留 BSP 與已下載的 tarball。 |
+| `./script/clean.sh l4t` | 移除整個 `Linux_for_Tegra/` 樹（BSP + rootfs + image）。保留 tarball。 |
+| `./script/clean.sh all` | l4t + 移除 `data/downloads/` tarball。 |
+
+當 `prepare.sh` 報 JetPack 版本 mismatch 時，執行 `./script/clean.sh l4t` 重置。
+
+## Inspector（SDK Manager GUI）
+
+`inspector` stage 內含 NVIDIA SDK Manager，但用途是**目錄瀏覽器**，不是燒錄工具。可查 JetPack 各版本含哪些 `.deb` 套件，或在不執行 `apt install nvidia-jetpack` 的情況下單獨下載某個 `.deb`。
 
 ```bash
-./script/setup.sh set build.arg_4 BASE_IMAGE=ubuntu:22.04
-make build -- -t cli
+make build -- -t inspector
+make run -- -t inspector
 ```
 
-> 注意：`make setup -- set ...` 在值包含 `=` 時無法正常運作（[base#414](https://github.com/ycpss91255-docker/base/issues/414)）。請直接使用 `./script/setup.sh`。
+Entrypoint 印出 banner 說明 Install 按鈕為何在 Docker 內失效，互動模式下會等待按 Enter 才啟動 GUI。如需傳遞參數給 `sdkmanager-gui`，透過 `make run` 的位置參數即可。
 
-或使用互動式 TUI：
-
-```bash
-make setup-tui
-```
-
-## 使用方式
-
-### 建置
-
-```bash
-make build                       # 建置 devel（base，不直接使用）
-make build -- -t cli             # 建置 CLI variant
-make build -- -t gui             # 建置 GUI variant（X11）
-make build test                  # 建置含 lint + smoke test
-```
-
-### 執行
-
-依 stage target 分兩種 variant：
-
-**GUI 模式**（需要 X11 display）：
-
-```bash
-make run -- -t gui               # 啟動 SDK Manager GUI
-```
-
-> GUI 模式需要 host 有 X11 session 執行中。base template 的 `setup.sh` 會自動偵測 `$DISPLAY` 並設定 X11 socket forwarding + XAUTHORITY。
-
-**CLI 模式**（無頭模式）：
-
-```bash
-# 互動式 CLI — SDK Manager 會逐步提示選擇
-make run -- -t cli
-```
-
-### CLI 範例
-
-**1. 僅下載** — 下載 JetPack 元件，不安裝：
-
-```bash
-make run -- -t cli sdkmanager --cli \
-  --action install \
-  --login-type devzone \
-  --product Jetson \
-  --target-os Linux \
-  --version 6.2 \
-  --target JETSON_AGX_ORIN_TARGETS \
-  --license accept \
-  --stay-logged-in true \
-  --download-only \
-  --exit-on-finish
-```
-
-**2. 安裝（燒錄）** — 如果已下載過，跳過下載直接燒錄：
-
-```bash
-make run -- -t cli sdkmanager --cli \
-  --action install \
-  --login-type devzone \
-  --product Jetson \
-  --target-os Linux \
-  --version 6.2 \
-  --target JETSON_AGX_ORIN_TARGETS \
-  --flash \
-  --license accept \
-  --stay-logged-in true \
-  --exit-on-finish
-```
-
-**3. 全自動** — 下載 + 燒錄 + 安裝 SDK 元件一次完成：
-
-```bash
-make run -- -t cli sdkmanager --cli \
-  --action install \
-  --login-type devzone \
-  --product Jetson \
-  --target-os Linux \
-  --version 6.2 \
-  --target JETSON_AGX_ORIN_TARGETS \
-  --flash \
-  --license accept \
-  --stay-logged-in true \
-  --collect-usage-data enable \
-  --exit-on-finish
-```
-
-> 其他裝置請替換 `--target`：`JETSON_ORIN_NX_TARGETS`（Orin NX）或 `JETSON_ORIN_NANO_TARGETS`（Orin Nano）。JetPack 版本替換 `--version`。
-
-### CLI 參數一覽
-
-| 參數 | 值 | 說明 |
-|------|---|------|
-| `--cli` | | 啟用 CLI 模式 |
-| `--action` | `install` / `uninstall` / `downloadonly` | 執行的動作 |
-| `--login-type` | `devzone` / `nvonline` / `offline` | 認證方式 |
-| `--product` | `Jetson` | 目標產品系列 |
-| `--version` | 例如 `6.2` | JetPack 版本 |
-| `--target-os` | `Linux` | 目標 OS |
-| `--target` | 見下表 | 目標板 |
-| `--flash` | | 燒錄裝置（省略則跳過燒錄） |
-| `--host` | | 同時安裝 host 元件 |
-| `--select` | `section_or_group` | 加入安裝清單（可重複） |
-| `--deselect` | `section_or_group` | 從安裝清單移除（可重複） |
-| `--additional-sdk` | `sdk_title` | 安裝額外 SDK（例如 DeepStream） |
-| `--download-only` | | 僅下載不安裝 |
-| `--download-folder` | 路徑 | 自訂下載目錄 |
-| `--target-image-folder` | 路徑 | 自訂 SDK 安裝目錄 |
-| `--license` | `accept` / `reject` | 自動接受授權 |
-| `--stay-logged-in` | `true` / `false` | 持久化登入 session |
-| `--exit-on-finish` | | 完成後自動退出 |
-| `--auto` | | 所有提示自動以預設值完成 |
-| `--query` | `interactive` / `non-interactive` | 列出可選項目 |
-| `--show-all-versions` | | 顯示所有可用版本（含非主要版本） |
-| `--archived-versions` | | 僅顯示已封存的 SDK 版本 |
-| `--list-connected` | `all` / `Jetson` | 列出已連接的裝置 |
-| `--usb-port` | 例如 `1-2` | 指定 USB port（多板連接時） |
-| `--response-file` | 路徑 | 從 response file 執行（全自動） |
-| `--export-response-file` | 路徑 | 匯出目前選擇為 response file |
-| `--export-logs` | 路徑 | 匯出 log 到指定目錄 |
-| `--collect-usage-data` | `enable` / `disable` | 使用資料收集 |
-
-### 支援的 Jetson Target
-
-| Target 參數 | 裝置 |
-|------------|------|
-| `JETSON_AGX_ORIN_TARGETS` | Jetson AGX Orin |
-| `JETSON_ORIN_NX_TARGETS` | Jetson Orin NX |
-| `JETSON_ORIN_NANO_TARGETS` | Jetson Orin Nano |
-
-### 進入已啟動的容器
-
-```bash
-make exec
-make exec -- -t cli bash
-```
-
-### 停止
-
-```bash
-make stop
-```
+GUI 模式需要 host 上的 X11 session；base template 會自動偵測 `$DISPLAY` 並轉發 X11 socket 與 `XAUTHORITY`。
 
 ## 持久化資料
 
-SDK Manager 的下載檔案和登入 session 持久化在 `data/`（已 gitignore）：
+`./data/` 下的每個路徑都會 bind-mount 進容器（gitignored）。
 
 | Host 路徑 | 容器路徑 | 用途 |
-|-----------|---------|------|
-| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | 登入 session 快取（登入一次，重複使用） |
-| `./data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | SDK 元件下載（~11 GB） |
-| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK 安裝目錄（~31 GB） |
-
-首次登入會建立 session；後續執行可透過 `--stay-logged-in true` 重複使用。
+|---|---|---|
+| `./data/jetson_l4t/` | `/srv/jetson_l4t` | BSP + rootfs + 產生的燒錄 image（工廠燒錄流程）。**必須是 ext4 / xfs / btrfs。** |
+| `./data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | 快取的 tarball（BSP + sample rootfs），與 SDK Manager 共用。 |
+| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager 登入 session 快取。僅 inspector stage。 |
+| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager 管理的 SDK 安裝目錄。僅 inspector stage。 |
+| `./jetson.yaml` | `/etc/jetson.yaml`（唯讀） | 使用者設定，被 `prepare.sh` / `flash.sh` / `inspector-entrypoint.sh` 讀取。 |
 
 ## 架構
 
 ```mermaid
 graph TD
-    EXT1["test-tools image\n(bats + shellcheck + hadolint)"]
-    EXT2["ubuntu:${BASE_IMAGE}\n(24.04 / 22.04)"]
-    EXT3["CUDA apt repo\n(cuda-keyring + sdkmanager)"]
+    EXT1["test-tools image\nbats + shellcheck + hadolint"]
+    EXT2["ubuntu:${BASE_IMAGE}\n(22.04 / 24.04)"]
+    EXT3["NVIDIA Jetson Linux Archive\nBSP + sample rootfs tarballs"]
+    EXT4["CUDA apt repo\ncuda-keyring + sdkmanager"]
 
     EXT2 --> sys["sys\nuser/group, locale, timezone"]
-    sys --> devel-base["devel-base\n開發工具 (git, vim, tmux, curl, wget)"]
-    devel-base --> devel["devel\n透過 apt 安裝 SDK Manager"]
+    sys --> devel-base["devel-base\ndev tools (git, vim, tmux, curl, wget)"]
+    devel-base --> devel["devel\nflash tooling + yq binary"]
 
-    devel --> cli["cli\nCMD sdkmanager --cli"]
-    devel --> gui["gui\n+ X11 client libs\nCMD sdkmanager"]
+    devel --> prepare["prepare\nCMD prepare.sh\n(host-side image build)"]
+    EXT3 --> prepare
+    devel --> flash["flash\nCMD flash.sh\n(USB write to Jetson)"]
+    devel --> inspector["inspector\n+ SDK Manager + X11 libs\nCMD inspector-entrypoint.sh"]
+    EXT4 --> inspector
 
-    EXT1 --> devel-test["devel-test（暫時性）\nshellcheck + hadolint + bats smoke"]
+    EXT1 --> devel-test["devel-test (ephemeral)\nshellcheck + hadolint + bats"]
     devel --> devel-test
-    gui --> gui-test["gui-test（暫時性）\nGUI 依賴 smoke test"]
-    EXT3 --> devel
+    inspector --> inspector-test["inspector-test (ephemeral)\nsdkmanager --ver"]
 ```
 
 ## Smoke Tests
@@ -289,138 +213,120 @@ graph TD
 詳見 [TEST.md](test/TEST.md)。
 
 ```bash
-make build test                  # 建置時執行 lint + smoke test
+make build test
 ```
+
+`devel-test` stage 對 `devel` image 跑 bats 測試；兩個 `sdkmanager` 斷言會在此被 skip（只在於 `inspector` image 內重跑 bats 時才會執行）。
 
 ## 目錄結構
 
 ```text
 jetson_sdk_manager/
-├── compose.yaml                 # Docker Compose（衍生產物，gitignored）
-├── Dockerfile                   # 多階段建置：sys → devel-base → devel → cli / gui
-├── Makefile -> .base/script/docker/Makefile
-├── .base/                       # 共用 template（git subtree）
-├── data/                       # 持久化 SDK Manager 資料（gitignored）
-│   ├── nvsdkm/                  #   登入 session 快取
-│   └── downloads/               #   SDK 元件下載
+├── jetson.yaml -> config/jetson/agx-orin-emmc.yaml   # symlink；切換 preset
+├── compose.yaml                 # Docker Compose（衍生，gitignored）
+├── Dockerfile                   # sys → devel-base → devel → {prepare, flash, inspector}
+├── Makefile -> .base/script/docker/wrapper/Makefile
+├── .base/                       # 共用模板（git subtree）
+├── data/                        # 持久化狀態（gitignored）
+│   ├── jetson_l4t/              #   BSP + rootfs + 燒錄 image
+│   ├── downloads/               #   BSP / rootfs tarball
+│   ├── nvsdkm/                  #   SDK Manager 登入 session（inspector）
+│   └── nvidia_sdk/              #   SDK Manager 安裝目錄（inspector）
 ├── config/
-│   └── docker/
-│       └── setup.conf           # Runtime 設定（volumes、build args 等）
+│   ├── docker/setup.conf        # 執行期設定 — source of truth
+│   ├── jetson/                  # 燒錄 preset 與 schema
+│   │   ├── _example.yaml        #   含註解的 canonical schema
+│   │   ├── _l4t_mapping.yaml    #   JetPack → L4T release / URL（build-time）
+│   │   └── *.yaml               #   各 board / storage 的 preset
+│   └── packages/                # inspector 的 X11 lib 清單（按 Ubuntu codename）
 ├── doc/
-│   └── adr/                     # 架構決策紀錄
-│       ├── 0001-apt-install-over-official-docker-image.md
-│       └── 0002-cli-gui-as-independent-stages.md
-├── doc/
+│   ├── adr/                     # 架構決策記錄
+│   ├── changelog/CHANGELOG.md
+│   ├── test/TEST.md
+│   ├── Flash_Workflow.md        # prepare/flash 階段深入說明
 │   ├── README.zh-TW.md
 │   ├── README.zh-CN.md
-│   ├── README.ja.md
-│   ├── changelog/CHANGELOG.md
-│   └── test/TEST.md
+│   └── README.ja.md
 ├── script/
-│   ├── build.sh -> ../.base/script/docker/build.sh
-│   ├── run.sh -> ../.base/script/docker/run.sh
-│   ├── exec.sh -> ../.base/script/docker/exec.sh
-│   ├── stop.sh -> ../.base/script/docker/stop.sh
-│   ├── setup.sh -> ../.base/script/docker/setup.sh
-│   ├── setup_tui.sh -> ../.base/script/docker/setup_tui.sh
-│   ├── prune.sh -> ../.base/script/docker/prune.sh
-│   └── entrypoint.sh
-├── test/smoke/
-│   └── orin_install_env.bats    # SDK Manager 安裝驗證
-├── .github/workflows/
-│   └── main.yaml                # CI/CD
+│   ├── prepare.sh               # 階段 1 entrypoint
+│   ├── flash.sh                 # 階段 2 entrypoint
+│   ├── clean.sh                 # Volume 清理指令
+│   ├── inspector-entrypoint.sh  # SDK Manager GUI 啟動器 + 警示 banner
+│   ├── lib/                     # yaml / download / volume / errors helpers
+│   ├── init_data_dirs.sh        # 首次以非 root 建立 data/
+│   ├── entrypoint.sh            # 容器 entrypoint（logging tee）
+│   ├── build.sh -> ../.base/script/docker/wrapper/build.sh
+│   ├── run.sh   -> ../.base/script/docker/wrapper/run.sh
+│   ├── exec.sh  -> ../.base/script/docker/wrapper/exec.sh
+│   ├── stop.sh  -> ../.base/script/docker/wrapper/stop.sh
+│   ├── setup.sh -> ../.base/script/docker/wrapper/setup.sh
+│   ├── setup_tui.sh -> ../.base/script/docker/wrapper/setup_tui.sh
+│   └── prune.sh -> ../.base/script/docker/wrapper/prune.sh
+├── test/smoke/orin_install_env.bats
+├── .github/workflows/main.yaml
 └── .gitignore
 ```
 
 ## 疑難排解
 
+### `prepare.sh` 中止：「L4T_ROOT ... is on ntfs/exfat/fuseblk」
+
+`apply_binaries.sh` 會產生 setuid binary（`sudo`）和 root 擁有的檔案。NTFS / exFAT / `fuseblk` / FAT 會靜默丟掉這兩者，產生的 Jetson 開機後 `sudo` 拒絕啟動。請將 repo 移到 ext4 / xfs / btrfs 分割區，或 bind-mount 一個 ext4 目錄覆蓋 `./data/jetson_l4t/`：
+
+```bash
+sudo mkdir -p /var/lib/jetson_l4t
+sudo mount --bind /var/lib/jetson_l4t ./data/jetson_l4t
+```
+
+### `prepare.sh` 中止：volume mismatch
+
+`.prepared.yaml` marker 顯示 volume 是為其他 JetPack / board 準備的，與目前 `jetson.yaml` 選擇的不同。清掉重跑：
+
+```bash
+./script/clean.sh l4t
+make run -- -t prepare
+```
+
 ### `chroot: failed to run command 'dpkg': Exec format error`
 
-Host kernel 無法執行 ARM64 binary。註冊 QEMU binfmt 翻譯器：
+Host kernel 無法執行 ARM64 binary。註冊 QEMU binfmt interpreter：
 
 ```bash
 docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
 ```
 
-每次開機後執行一次。
+每次開機執行一次。
 
-### `mknod: .../rootfs/dev/random: File exists`
+### `Could not detect a board` / Jetson 未進入 recovery
 
-上次失敗的燒錄殘留了不完整的 rootfs 在 `data/nvidia_sdk/`。SDK Manager 的安裝腳本不具冪等性，無法覆蓋已存在的 device node。清除 rootfs 後重試：
+`flash.sh` 會檢查 `lsusb` 是否出現 NVIDIA VID `0955` + recovery PID（`7023` / `7223` / `7423` / `7523` / `7e19`），若無則中止。
 
-```bash
-sudo rm -rf data/nvidia_sdk/JetPack_*_TARGETS/Linux_for_Tegra/rootfs/
-```
+進入 recovery mode 步驟：
 
-### `Could not detect a board` / 偵測不到 Jetson
+1. 斷電。
+2. 用 USB-C 線連接 Jetson **前面板**（按鈕側）與 host。
+3. 按住 **REC**（中間按鈕）。
+4. 接電（或按 Power）。
+5. 約 2 秒後放開 REC。
 
-SDK Manager 找不到 Jetson 裝置。檢查以下項目：
-
-1. **Recovery mode** — 連接前 Jetson 必須進入 Force Recovery 模式：
-   - 拔掉電源
-   - 用 USB-C 線連接 Jetson **前面板**（按鈕側）與 host
-   - 按住 **REC（中間）按鈕**不放
-   - 接上電源（或按 Power 按鈕）
-   - 等 2 秒後放開 REC
-
-2. **在 host 端確認 recovery mode**：
-
-   ```bash
-   lsusb | grep 0955
-   ```
-
-   | 輸出 | 狀態 |
-   |------|------|
-   | `0955:7023 NVIDIA Corp. APX` | Recovery mode（AGX Orin） |
-   | `0955:7223 NVIDIA Corp. APX` | Recovery mode（Orin NX/Nano） |
-   | `0955:xxxx`（其他 product ID） | 正常模式 — 需重新進入 recovery |
-   | （無輸出） | 未偵測到 — 檢查線材/port |
-
-   > 注意：Recovery mode 使用 USB 2.0（480 Mbps），這是正常的。APX 模式下 USB 3.0 controller 未啟用。
-
-   如果沒有出現：
-
-   - **USB-C 線** — 部分線材僅支援充電，無資料線。請使用支援資料傳輸的線材
-   - **USB port** — 直接接到 host，不要經過 USB hub（hub 可能不支援 USB device mode）
-   - **接錯 port** — 使用前面板 USB-C（按鈕側），不是後面板 USB-C（電源側）
-
-### `The connected Jetson device is not ready for flash`
-
-USB 連線不穩定。依序嘗試以下步驟：
-
-1. 在 SDK Manager 對話框中按 **Reset USB Controller**
-2. 拔 USB-C → 拔 Jetson 電源 → 重新接 USB-C → 重新接電源 → 重新進入 recovery mode
-3. 換一條 USB-C 線
-4. 換 host 上的另一個 USB port（避免使用 hub）
-5. 重新開機 host
-
-### `tar: lbzip2: Cannot exec: No such file or directory`
-
-容器缺少 `lbzip2`。用最新的 Dockerfile 重新建置：
+在 host 驗證：
 
 ```bash
-git pull && make build -- -t gui
+lsusb | grep 0955
 ```
 
-### `root is not in the sudoers file`
+| 輸出 | 狀態 |
+|---|---|
+| `0955:7023 NVIDIA Corp. APX` | AGX Orin 進入 recovery |
+| `0955:7223 NVIDIA Corp. APX` | Orin NX / Nano 進入 recovery |
+| `0955:xxxx`（其他 PID） | 正常開機 — 重新進入 recovery |
+| （無輸出） | 未偵測到 — 換線 / 換 port / 直連（不要用 hub） |
 
-容器 image 缺少 root 的 sudoers 規則。用最新的 Dockerfile 重新建置：
-
-```bash
-git pull && make build -- -t gui
-```
-
-### `/bin/sh: 1: file: not found`
-
-容器缺少 `file` 指令。用最新的 Dockerfile 重新建置：
-
-```bash
-git pull && make build -- -t gui
-```
+Recovery mode 走 USB 2.0（480 Mbps），這是正常的 — APX 模式下 USB 3 controller 不啟用。
 
 ### `ERROR: might be timeout in USB write` / `Return value 3`
 
-`flash.sh` 在 Boot ROM 通訊階段因 USB bulk transfer 超時而失敗：
+Boot ROM 通訊在 USB bulk transfer 時卡住：
 
 ```
 Sending bct_br
@@ -428,55 +334,35 @@ ERROR: might be timeout in USB write.
 Error: Return value 3
 ```
 
-原因是 Jetson 的 USB endpoint 處於異常狀態 — 通常發生在之前的燒錄失敗或中斷之後。解決方法是**完整的硬體斷電重啟**：
+前次燒錄中斷遺留的 USB endpoint 狀態。需要**硬體**斷電 — `tegrarcm_v2 --reboot recovery` 不夠：
 
-1. 完全拔除 Jetson 電源
-2. 按住 **Recovery** 按鈕
-3. 重新接上電源
-4. 等待 2–3 秒後鬆開 Recovery
+1. Jetson 完全斷電。
+2. 按住 **Recovery**。
+3. 接電。
+4. 2–3 秒後放開 Recovery。
 
-軟體重開機（`tegrarcm_v2 --reboot recovery`）**無法**解決此問題 — 必須透過硬體斷電來重置 USB endpoint。
+同時確認本次開機已套用 [前置需求](#前置需求) 中的 USB buffer size 調整。
 
-同時確認 host 已設定 USB buffer size（每次開機後執行一次）：
+### `Error: Error opening /dev/sda: No medium found`（microSD 透過 USB reader）
 
-```bash
-echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
-```
-
-### `command is failed`（recovery ramdisk 生成階段）
-
-`flash.sh` 在 `_BASE_KERNEL_VERSION=...` 之後出現 `command is failed` 錯誤。原因是缺少 `ssh-keygen`（`openssh-client` 套件）。用最新的 Dockerfile 重新建置：
-
-```bash
-git pull && make build -- -t gui
-```
-
-### `Error: Error opening /dev/sda: No medium found`（SD card / USB flash）
-
-`l4t_initrd_flash.sh` 回報外部儲存裝置為空，但 microSD 卡實際上有插在 USB 讀卡機中。常見於**多 slot 複合讀卡機**，每個 slot 對應到獨立的 LUN：
+多卡槽 combo reader 會把每個卡槽當作獨立 LUN。預設的 `--external-device sda1` 開到空卡槽：
 
 ```bash
 $ lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN
-sda    0B  Generic-  SD/MMC          usb     # 空的 SD/MMC slot
-sdb  117.8G Generic-  Micro SD/M2    usb     # microSD 卡實際在這
+sda    0B  Generic-  SD/MMC          usb     # 空槽
+sdb  117.8G Generic-  Micro SD/M2    usb     # 卡實際在這
 ```
 
-預設 `--external-device sda1` 會開到空的 slot。解決方法：
+解法：
 
-1. **把卡換到對應 `/dev/sda` 的 slot**（若需要可用 microSD-to-SD 轉接卡）
-2. **使用單 slot 讀卡機** — 只有 microSD slot 的讀卡機固定 enumerate 為 `sda`
-3. **燒錄前先在 host 確認**：
+1. 把卡移到對應 `/dev/sda` 的槽（必要時用 microSD-to-SD 轉接卡）。
+2. 用單槽 microSD reader — 永遠 enumerate 為 `sda`。
+3. 修改 `jetson.yaml` 的 `storage.device` — 但 BSP `--external-device` 只認 alias 對應的路徑，若需自訂則在 `_l4t_mapping.yaml::storage_alias_to_device` 中加新項。
 
-   ```bash
-   lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN
-   ```
+### 燒錄到 APP partition 卡住（external storage）
 
-### `Flash failure`（APP partition 寫入階段，外部儲存）
+USB ethernet 在大量持續傳輸時偶爾會在 APP partition 解壓階段卡住，~12 分鐘後 timeout 失敗。解法：
 
-燒錄 rootfs 到 SD 卡或 USB drive 時，bootloader partition 寫入成功，但卡在 **APP partition** 解壓階段，約 12 分鐘後 timeout 失敗。原因是 USB ethernet 在持續大量資料傳輸時的頻寬限制。
-
-解決方法：
-
-1. **改用 eMMC + apt**（推薦）— `flash.sh ... internal` 燒錄 OS，然後在 Jetson 上 `sudo apt install nvidia-jetpack` 安裝 SDK 元件
-2. **改用 NVMe SSD** — 直接 PCIe 寫入比 USB ethernet 解壓快
-3. **斷電重進 recovery 後重試** — 有時 USB 卡頓會在新的 recovery boot 後清除
+1. 改燒到 **eMMC**（`storage.device: emmc`），然後在 Jetson 上 `sudo apt install nvidia-jetpack`。
+2. 用 **NVMe SSD** — PCIe 直寫比 USB-ethernet 解壓快。
+3. Jetson 完全 power-cycle 後重試。

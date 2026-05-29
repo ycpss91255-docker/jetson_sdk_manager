@@ -230,7 +230,6 @@ RUN shellcheck -S warning /lint/wrapper/*.sh /lint/lib/*.sh && \
     shellcheck -S warning \
         /lint/prepare.sh /lint/flash.sh /lint/clean.sh \
         /lint/inspector-entrypoint.sh \
-        /lint/sdkm-cli.sh /lint/flash-build.sh /lint/flash-only.sh \
         /lint/init_data_dirs.sh /lint/entrypoint.sh \
         /lint/script_lib/*.sh
 WORKDIR /lint
