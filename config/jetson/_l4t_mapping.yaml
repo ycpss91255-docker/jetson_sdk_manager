@@ -29,9 +29,22 @@ board_alias_to_target:
   orin-nx: jetson-orin-nx-devkit-super
   orin-nano: jetson-orin-nano-devkit-super
 
-# `--storage` argument to `l4t_initrd_flash.sh`. Names match the kernel
-# device path the Jetson exposes to user space at first boot.
+# Maps the user-facing `storage.device` alias to one of two shapes that
+# script/lib/yaml.sh::resolve_storage_device understands:
+#
+#   1. The reserved keyword "internal" — eMMC / on-module storage.
+#      Resolver returns (mode=internal, device=""). prepare.sh / flash.sh
+#      pass the literal `internal` as l4t_initrd_flash.sh's positional
+#      storage-type argument and skip every --external-* flag.
+#
+#   2. Any other string — treated as the Jetson recovery initrd's kernel
+#      device name (e.g. `nvme0n1p1`, `sda1`). Resolver returns
+#      (mode=external, device=<value>); prepare.sh / flash.sh pass it via
+#      `--external-device` and append the `external` positional. The user
+#      may override this default at runtime via `storage.device_path` in
+#      jetson.yaml (e.g. set `sdb1` when a multi-slot USB card reader
+#      exposes the card on a non-default LUN).
 storage_alias_to_device:
-  emmc: mmcblk0p1
+  emmc: internal
   nvme: nvme0n1p1
   usb: sda1

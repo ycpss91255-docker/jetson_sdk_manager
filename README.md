@@ -95,9 +95,19 @@ Each preset sets:
 
 - `jetpack.version` — resolved to L4T release + BSP / rootfs URLs via `config/jetson/_l4t_mapping.yaml`.
 - `hardware.board` — alias → NVIDIA `--target` name.
-- `storage.device` — alias → kernel device path passed to `--external-device`.
+- `storage.device` — alias → storage mode (`internal` for eMMC, `external` for NVMe / USB / SD) + default kernel device path the Jetson recovery initrd is told to write.
 - `user.{username,password,hostname,autologin}` — pre-creates the default user via `l4t_create_default_user.sh`, skipping OEM-config on first boot.
 - `network` (optional) — DHCP by default; set `method: static` to install a `NetworkManager` system-connection profile.
+
+**Multi-slot USB readers / non-default device enumeration.** When a USB SSD or microSD reader exposes the storage on a non-default LUN (typically the empty slot shows up as `sda` and the card lands on `sdb`), add `storage.device_path` to override the alias-resolved kernel device:
+
+```yaml
+storage:
+  device: usb
+  device_path: sdb1      # overrides the usb alias's sda1 default
+```
+
+To find the right value, plug the storage into the host first and run `lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN`; the Jetson recovery initrd usually mirrors host enumeration. If the first flash still aborts on `Error opening /dev/sd*: No medium found`, try the next letter (`sdb1` → `sdc1`) — see [Troubleshooting](#error-error-opening-devsda-no-medium-found-microsd-via-usb-reader). Setting `device_path` together with `storage.device: emmc` (internal mode) is rejected at validation time.
 
 See `config/jetson/_example.yaml` for the full schema with comments.
 
@@ -278,6 +288,14 @@ sudo mkdir -p /var/lib/jetson_l4t
 sudo mount --bind /var/lib/jetson_l4t ./data/jetson_l4t
 ```
 
+If you want to verify whether the setuid loss actually breaks your Jetson (the guard is preemptive — see [ADR 0003](doc/adr/0003-skip-sdk-manager-for-flashing.md)), set `JETSON_ALLOW_NON_UNIX_FS=1` to downgrade the abort to a warning:
+
+```bash
+JETSON_ALLOW_NON_UNIX_FS=1 make run -- -t prepare
+```
+
+This is opt-in and prints a clear notice; do not use it for a production flash without verifying the resulting Jetson's `sudo` works.
+
 ### `prepare.sh` aborts: volume mismatch
 
 The `.prepared.yaml` marker says the volume was prepared for a different JetPack / board than `jetson.yaml` now selects. Wipe and re-run:
@@ -345,7 +363,7 @@ Also confirm the USB buffer-size bump from [Prerequisites](#prerequisites) was a
 
 ### `Error: Error opening /dev/sda: No medium found` (microSD via USB reader)
 
-Multi-slot combo readers expose each slot as a separate LUN. The default `--external-device sda1` opens the empty slot:
+Multi-slot combo readers expose each slot as a separate LUN, and the default `usb` alias maps to `sda1`. If the empty slot enumerates as `sda` and the card lands on `sdb`, the flash aborts before it ever touches the card:
 
 ```bash
 $ lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN
@@ -353,11 +371,18 @@ sda    0B  Generic-  SD/MMC          usb     # empty
 sdb  117.8G Generic-  Micro SD/M2    usb     # card actually here
 ```
 
-Options:
+**Finding the right `device_path`** (host enumeration usually mirrors the Jetson recovery initrd's, but is not guaranteed):
 
-1. Move the card to whichever slot maps to `/dev/sda` (use a microSD-to-SD adapter if needed).
-2. Use a single-slot microSD reader — those always enumerate as `sda`.
-3. Edit `storage.device` in `jetson.yaml` to the actual device — but the BSP `--external-device` argument accepts `sd*` only by alias; map manually inside `_l4t_mapping.yaml::storage_alias_to_device` if you need a custom path.
+1. Plug the storage into the host with the rest of the USB tree the way it'll be at flash time.
+2. Run `lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN`; the disk whose `SIZE` matches your card / SSD is the target.
+3. Set `storage.device_path: <name>1` in `jetson.yaml` (e.g. `sdb1`) — partition `1` is what `l4t_initrd_flash.sh` expects.
+
+If the first attempt still fails the same way, the Jetson initrd enumerated the bus differently; try the next letter (`sdb1` → `sdc1`, etc.). See [Configure `jetson.yaml`](#configure-jetsonyaml) for the full override semantics.
+
+Other workarounds, in rough order of preference:
+
+1. Use a single-slot microSD reader — those always enumerate as `sda`, the alias default.
+2. Move the card to whichever slot maps to `/dev/sda` (use a microSD-to-SD adapter if needed).
 
 ### Flash hangs on APP partition (external storage)
 

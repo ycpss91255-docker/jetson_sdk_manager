@@ -79,7 +79,7 @@ resolve_l4t_release() {
     emit_error \
       --category validate \
       --detail "JetPack version '${jp}' not in ${L4T_MAPPING_YAML}" \
-      --action "Use a supported version: $(yq -r '.jetpack_to_l4t | keys | join(\", \")' "${L4T_MAPPING_YAML}")" \
+      --action "Use a supported version: $(yq -r '.jetpack_to_l4t | keys | join(", ")' "${L4T_MAPPING_YAML}")" \
       --action "Or add a new entry — see _l4t_mapping.yaml header for instructions"
     return 1
   fi
@@ -96,23 +96,51 @@ resolve_board_target() {
     emit_error \
       --category validate \
       --detail "Board alias '${alias}' not in ${L4T_MAPPING_YAML}" \
-      --action "Use one of: $(yq -r '.board_alias_to_target | keys | join(\", \")' "${L4T_MAPPING_YAML}")"
+      --action "Use one of: $(yq -r '.board_alias_to_target | keys | join(", ")' "${L4T_MAPPING_YAML}")"
     return 1
   fi
   printf '%s' "${target}"
 }
 
-# resolve_storage_device <storage_alias>
+# resolve_storage_device <storage_alias> [device_path_override]
+#
+# Echoes shell `KEY=value` assignments for the caller to `eval`:
+#   STORAGE_MODE=internal|external
+#   STORAGE_DEVICE=<kernel name>     (empty when mode=internal)
+#
+# Alias "internal" reserved keyword → mode=internal. Any other mapped
+# value is treated as the Jetson-initrd-side kernel device name. The
+# optional `device_path_override` (from `storage.device_path` in
+# jetson.yaml) replaces the mapped default when mode=external.
+#
+# Usage:
+#   eval "$(resolve_storage_device "${alias}" "${override}")"
+#   echo "${STORAGE_MODE} ${STORAGE_DEVICE}"
 resolve_storage_device() {
-  local alias="$1"
-  local dev
-  dev=$(yq -r ".storage_alias_to_device.\"${alias}\"" "${L4T_MAPPING_YAML}")
-  if [[ -z "${dev}" || "${dev}" == "null" ]]; then
+  local alias="$1" override="${2:-}"
+  local mapped
+  mapped=$(yq -r ".storage_alias_to_device.\"${alias}\"" "${L4T_MAPPING_YAML}")
+  if [[ -z "${mapped}" || "${mapped}" == "null" ]]; then
     emit_error \
       --category validate \
       --detail "Storage alias '${alias}' not in ${L4T_MAPPING_YAML}" \
-      --action "Use one of: $(yq -r '.storage_alias_to_device | keys | join(\", \")' "${L4T_MAPPING_YAML}")"
+      --action "Use one of: $(yq -r '.storage_alias_to_device | keys | join(", ")' "${L4T_MAPPING_YAML}")"
     return 1
   fi
-  printf '%s' "${dev}"
+
+  if [[ "${mapped}" == "internal" ]]; then
+    if [[ -n "${override}" ]]; then
+      emit_error \
+        --category validate \
+        --detail "storage.device_path='${override}' set but storage.device='${alias}' resolves to internal mode" \
+        --action "Remove storage.device_path from jetson.yaml" \
+        --action "Or change storage.device to an external alias (nvme / usb) if you meant to flash external storage"
+      return 1
+    fi
+    printf 'STORAGE_MODE=internal\nSTORAGE_DEVICE=\n'
+    return 0
+  fi
+
+  local device="${override:-${mapped}}"
+  printf 'STORAGE_MODE=external\nSTORAGE_DEVICE=%q\n' "${device}"
 }

@@ -45,16 +45,18 @@ _usb_jetson_present() {
 
 main() {
   _step "1/5 Validating /etc/jetson.yaml"
-  local jp board storage_alias hw_target storage_device
+  local jp board storage_alias storage_device_path hw_target
   jp=$(yaml_get "${JETSON_YAML}" '.jetpack.version')
   board=$(yaml_get "${JETSON_YAML}" '.hardware.board')
   storage_alias=$(yaml_get "${JETSON_YAML}" '.storage.device')
+  storage_device_path=$(yaml_get_optional "${JETSON_YAML}" '.storage.device_path' '')
 
   _step "2/5 Resolving target + storage device"
   hw_target=$(resolve_board_target "${board}")
-  storage_device=$(resolve_storage_device "${storage_alias}")
-  printf '  Target:  %s\n  Storage: %s (%s)\n' \
-    "${hw_target}" "${storage_alias}" "${storage_device}" >&2
+  eval "$(resolve_storage_device "${storage_alias}" "${storage_device_path}")"
+  printf '  Target:  %s\n  Storage: %s (mode=%s%s)\n' \
+    "${hw_target}" "${storage_alias}" "${STORAGE_MODE}" \
+    "${STORAGE_DEVICE:+, device=${STORAGE_DEVICE}}" >&2
 
   _step "3/5 Asserting volume prepared"
   local state
@@ -90,11 +92,18 @@ main() {
   _step "5/5 Flashing (l4t_initrd_flash --flash-only)"
   local l4t_dir
   l4t_dir=$(l4t_root_path "${jp}" "${hw_target}")
-  (cd "${l4t_dir}" && sudo ./tools/kernel_flash/l4t_initrd_flash.sh \
-    --flash-only \
-    --external-device "${storage_device}" \
-    "${hw_target}" \
-    external)
+  if [[ "${STORAGE_MODE}" == "internal" ]]; then
+    (cd "${l4t_dir}" && sudo ./tools/kernel_flash/l4t_initrd_flash.sh \
+      --flash-only \
+      "${hw_target}" \
+      internal)
+  else
+    (cd "${l4t_dir}" && sudo ./tools/kernel_flash/l4t_initrd_flash.sh \
+      --flash-only \
+      --external-device "${STORAGE_DEVICE}" \
+      "${hw_target}" \
+      external)
+  fi
 
   cat <<EOF >&2
 
