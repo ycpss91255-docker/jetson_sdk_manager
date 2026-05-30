@@ -69,7 +69,17 @@ SDK Manager 仍保留於 **`inspector`** stage，用途是瀏覽 JetPack 的元�
   echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
   ```
 
-- **USB auto-suspend** — 連接 Jetson 的 port 必須關閉 auto-suspend，否則燒錄可能卡住。
+- **USB auto-suspend** — 連接 Jetson 的 port 必須關閉 auto-suspend，否則 `tegrarcm_v2` 可能在寫入過程中因 kernel 把裝置 park 而卡住。最簡便是本次開機全域關掉：
+
+  ```bash
+  echo -1 | sudo tee /sys/module/usbcore/parameters/autosuspend
+  ```
+
+  若只想針對單一裝置（Jetson 進 APX recovery 後用 `lsusb -t` 找路徑，對應到 `/sys/bus/usb/devices/<bus>-<port>/`）：
+
+  ```bash
+  echo on | sudo tee /sys/bus/usb/devices/<bus>-<port>/power/control
+  ```
 - **Jetson 進入 APX recovery**（僅 `flash` 階段需要；`prepare` 不需連 Jetson）。
 
 ## 設定 `jetson.yaml`
