@@ -297,13 +297,13 @@ sudo mount --bind /media/<ext4-mount>/jetson_l4t ./data/jetson_l4t
 
 兩種 bind mount 都不會 persistent；重開機後跑 `make run -- -t prepare` 前要再 mount 一次。
 
-若想驗證 setuid 真的會壞（這道 guard 是預防性的，見 [ADR 0003](../doc/adr/0003-skip-sdk-manager-for-flashing.md)），設 `JETSON_ALLOW_NON_UNIX_FS=1` 把 abort 降為警告：
+僅供診斷用途，`JETSON_ALLOW_NON_UNIX_FS=1` 把 abort 降為警告：
 
 ```bash
 JETSON_ALLOW_NON_UNIX_FS=1 make run -- -t prepare
 ```
 
-opt-in 且會印明顯通知；正式燒錄前請先驗證燒出來的 Jetson `sudo` 可用。
+**此 flag 不能在非 unix 檔案系統上產出可用的 flash**。NVIDIA `apply_binaries.sh` 自己會用 `find rootfs/etc/passwd -user root -group root` 檢查 rootfs ownership，sample rootfs 解壓到錯誤的 owner 之後它會在第 7/10 步自行 abort。這道 escape hatch 只是讓 maintainer 能跑到那一步實證失敗模式，不是繞過 filesystem 限制的方法。
 
 ### `prepare.sh` 中止：volume mismatch
 

@@ -297,13 +297,13 @@ sudo mount --bind /media/<ext4-mount>/jetson_l4t ./data/jetson_l4t
 
 Either form of the bind mount is non-persistent; re-apply it after a reboot before running `make run -- -t prepare`.
 
-If you want to verify whether the setuid loss actually breaks your Jetson (the guard is preemptive — see [ADR 0003](doc/adr/0003-skip-sdk-manager-for-flashing.md)), set `JETSON_ALLOW_NON_UNIX_FS=1` to downgrade the abort to a warning:
+For diagnostic purposes only, `JETSON_ALLOW_NON_UNIX_FS=1` downgrades the abort to a warning:
 
 ```bash
 JETSON_ALLOW_NON_UNIX_FS=1 make run -- -t prepare
 ```
 
-This is opt-in and prints a clear notice; do not use it for a production flash without verifying the resulting Jetson's `sudo` works.
+This **cannot produce a working flash** on a non-unix filesystem. NVIDIA's `apply_binaries.sh` has its own root-ownership check (`find rootfs/etc/passwd -user root -group root`) that aborts step 7/10 once the sample rootfs has extracted under the wrong owner. The escape hatch only exists so a maintainer can run prepare far enough to observe the failure mode empirically; it is not a workaround for the underlying filesystem constraint.
 
 ### `prepare.sh` aborts: volume mismatch
 
