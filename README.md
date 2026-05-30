@@ -69,7 +69,17 @@ SDK Manager is still shipped — in the **`inspector`** stage — as a catalog b
   echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
   ```
 
-- **USB auto-suspend** — disabled on the port connected to the Jetson, or flashing can hang.
+- **USB auto-suspend** — must be off on the port connected to the Jetson, or `tegrarcm_v2` can hang mid-write while the kernel parks the device. Easiest fix is to disable it globally for the rest of the boot:
+
+  ```bash
+  echo -1 | sudo tee /sys/module/usbcore/parameters/autosuspend
+  ```
+
+  For a per-device override (find the path via `lsusb -t` once Jetson is in APX recovery, then map to `/sys/bus/usb/devices/<bus>-<port>/`):
+
+  ```bash
+  echo on | sudo tee /sys/bus/usb/devices/<bus>-<port>/power/control
+  ```
 - **Jetson in APX recovery** (for the `flash` stage only; `prepare` needs no Jetson connected).
 
 ## Configure `jetson.yaml`
