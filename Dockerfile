@@ -336,6 +336,13 @@ USER root
 
 # Tools (yq, lbzip2, tar, wget, sudo, openssh-client, etc.) already
 # in devel. This stage layers in only the YAML mapping + entry script.
+#
+# `/etc/jetson/` must be pre-created with traversable perms; otherwise
+# BuildKit's --chmod=0644 flag is applied to BOTH the file AND the
+# implicitly-created parent directory, leaving /etc/jetson/ as 0644
+# (drw-r--r--) which blocks non-root users from chdir-ing in to read
+# the file. Same fix needed in the flash stage below.
+RUN mkdir -p /etc/jetson && chmod 0755 /etc/jetson
 COPY --chmod=0644 config/jetson/_l4t_mapping.yaml /etc/jetson/_l4t_mapping.yaml
 # Co-locate the entry script with its lib/ siblings — script/prepare.sh
 # sources script/lib/*.sh via a relative `${BASH_SOURCE[0]}` lookup.
@@ -356,7 +363,8 @@ FROM devel AS flash
 USER root
 
 # yq already in devel. This stage layers in only the YAML mapping
-# + entry script.
+# + entry script. See prepare stage above re. /etc/jetson/ pre-mkdir.
+RUN mkdir -p /etc/jetson && chmod 0755 /etc/jetson
 COPY --chmod=0644 config/jetson/_l4t_mapping.yaml /etc/jetson/_l4t_mapping.yaml
 COPY --chmod=0755 script/flash.sh /opt/jetson_install/flash.sh
 COPY --chmod=0755 script/lib /opt/jetson_install/lib
