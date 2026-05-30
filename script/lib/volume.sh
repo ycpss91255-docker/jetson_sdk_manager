@@ -103,10 +103,16 @@ volume_record_phase() {
 }
 
 # volume_phase_done <jetpack_version> <hw_targets> <phase>
+#
+# mikefarah yq does not implement jq's `index()`; using it falls through
+# to "syntax error" + the resume path silently re-runs every step. Use
+# `contains(["<phase>"])` which mikefarah does support — returns true
+# when the array holds the phase, false otherwise, and `-e` flips false
+# into a non-zero exit so the caller can branch on it.
 volume_phase_done() {
   local jp="$1" hw="$2" phase="$3"
   local marker
   marker="$(volume_marker_path "${jp}" "${hw}")"
   [[ -f "${marker}" ]] || return 1
-  yq -e ".phases | index(\"${phase}\")" "${marker}" >/dev/null 2>&1
+  yq -e ".phases | contains([\"${phase}\"])" "${marker}" >/dev/null 2>&1
 }

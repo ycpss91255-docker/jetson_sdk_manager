@@ -49,12 +49,17 @@ _assert_unix_fs() {
       return 0
       ;;
     fuseblk|ntfs*|exfat|vfat|msdos)
+      if [[ "${JETSON_ALLOW_NON_UNIX_FS:-0}" == "1" ]]; then
+        printf '[prepare] WARNING: L4T_ROOT is on %s and JETSON_ALLOW_NON_UNIX_FS=1 — continuing anyway. The flashed Jetson may end up with a broken sudo if setuid/ownership got stripped during apply_binaries.sh.\n' \
+          "${fstype}" >&2
+        return 0
+      fi
       emit_error \
         --category permission \
         --detail "L4T_ROOT (${path}) is on ${fstype} — cannot preserve setuid / root ownership" \
         --action "Move this repo to an ext4 / xfs / btrfs partition" \
         --action "Or bind-mount an ext4 dir over ./data/jetson_l4t/: \`sudo mkdir -p /var/lib/jetson_l4t && sudo mount --bind /var/lib/jetson_l4t ./data/jetson_l4t\`" \
-        --action "Then re-run \`make run -- -t prepare\`"
+        --action "Or opt in to the unsafe path: \`JETSON_ALLOW_NON_UNIX_FS=1 make run -- -t prepare\`"
       return 1
       ;;
     *)
@@ -69,10 +74,11 @@ main() {
   _assert_unix_fs "${L4T_ROOT}"
 
   _step "1/10 Validating /etc/jetson.yaml"
-  local jp board storage_alias hw_target storage_device username password hostname autologin
+  local jp board storage_alias storage_device_path hw_target username password hostname autologin
   jp=$(yaml_get "${JETSON_YAML}" '.jetpack.version')
   board=$(yaml_get "${JETSON_YAML}" '.hardware.board')
   storage_alias=$(yaml_get "${JETSON_YAML}" '.storage.device')
+  storage_device_path=$(yaml_get_optional "${JETSON_YAML}" '.storage.device_path' '')
   username=$(yaml_get "${JETSON_YAML}" '.user.username')
   password=$(yaml_get "${JETSON_YAML}" '.user.password')
   hostname=$(yaml_get "${JETSON_YAML}" '.user.hostname')
@@ -81,9 +87,10 @@ main() {
   _step "2/10 Resolving JetPack ${jp} → L4T metadata"
   eval "$(resolve_l4t_release "${jp}")"
   hw_target=$(resolve_board_target "${board}")
-  storage_device=$(resolve_storage_device "${storage_alias}")
-  printf '  L4T release: %s\n  Target:      %s\n  Storage:     %s (%s)\n' \
-    "${L4T_RELEASE}" "${hw_target}" "${storage_alias}" "${storage_device}" >&2
+  eval "$(resolve_storage_device "${storage_alias}" "${storage_device_path}")"
+  printf '  L4T release: %s\n  Target:      %s\n  Storage:     %s (mode=%s%s)\n' \
+    "${L4T_RELEASE}" "${hw_target}" "${storage_alias}" "${STORAGE_MODE}" \
+    "${STORAGE_DEVICE:+, device=${STORAGE_DEVICE}}" >&2
 
   _step "3/10 Probing volume state"
   volume_assert_match "${jp}" "${hw_target}"
@@ -168,15 +175,22 @@ main() {
 
   _step "10/10 Generating flash images (l4t_initrd_flash --no-flash)"
   if ! volume_phase_done "${jp}" "${hw_target}" "images"; then
-    (cd "${l4t_dir}" && sudo ./tools/kernel_flash/l4t_initrd_flash.sh \
-      --no-flash \
-      --external-device "${storage_device}" \
-      --external-only \
-      -c ./tools/kernel_flash/flash_l4t_external.xml \
-      -p '-c bootloader/generic/cfg/flash_t234_qspi.xml' \
-      --network usb0 \
-      "${hw_target}" \
-      external)
+    if [[ "${STORAGE_MODE}" == "internal" ]]; then
+      (cd "${l4t_dir}" && sudo ./tools/kernel_flash/l4t_initrd_flash.sh \
+        --no-flash \
+        "${hw_target}" \
+        internal)
+    else
+      (cd "${l4t_dir}" && sudo ./tools/kernel_flash/l4t_initrd_flash.sh \
+        --no-flash \
+        --external-device "${STORAGE_DEVICE}" \
+        --external-only \
+        -c ./tools/kernel_flash/flash_l4t_external.xml \
+        -p '-c bootloader/generic/cfg/flash_t234_qspi.xml' \
+        --network usb0 \
+        "${hw_target}" \
+        external)
+    fi
     volume_record_phase "${jp}" "${hw_target}" "images"
   else
     printf '  Flash images already generated — skipping\n' >&2

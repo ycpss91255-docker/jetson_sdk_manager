@@ -242,6 +242,17 @@ RUN ln -sf /opt/bats/bin/bats /usr/local/bin/bats
 
 ENV BATS_LIB_PATH="/usr/lib/bats"
 
+# Runtime-layout copy of the prepare/flash entry scripts + their lib/
+# siblings, mirroring the path used by the prepare and flash stages
+# (/opt/jetson_install/). Separate from the /lint/ rename-shuffle COPY
+# above (which exists to feed shellcheck without making /lint/lib clash
+# with the shellchecked /lint/lib from .base/). Used by the storage
+# resolver + flash dispatch bats integration tests to drive prepare.sh
+# and flash.sh end-to-end.
+COPY --chmod=0755 script/prepare.sh /opt/jetson_install/prepare.sh
+COPY --chmod=0755 script/flash.sh /opt/jetson_install/flash.sh
+COPY --chmod=0755 script/lib /opt/jetson_install/lib
+
 # Smoke test (shared from template + repo-specific)
 COPY .base/test/smoke/ /smoke_test/
 COPY test/smoke/ /smoke_test/

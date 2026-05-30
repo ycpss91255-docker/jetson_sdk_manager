@@ -21,7 +21,11 @@ set -euo pipefail
 # Default report URL — overridable per-call with --report.
 ERRORS_REPORT_URL="${ERRORS_REPORT_URL:-https://github.com/ycpss91255-docker/jetson_sdk_manager/issues}"
 
-declare -A _CATEGORY_HINTS=(
+# `-g` so this stays global when errors.sh is sourced from inside a
+# function (e.g. bats setup()) — `declare -A` alone would create a
+# function-local array and emit_error's later subscript access would
+# look up an undefined name (`set -u` flips it into "unbound variable").
+declare -gA _CATEGORY_HINTS=(
   [download]="Network / NVIDIA archive availability problem."
   [extract]="Tarball corrupt or filesystem cannot preserve unix attrs."
   [validate]="jetson.yaml content does not match the expected schema."

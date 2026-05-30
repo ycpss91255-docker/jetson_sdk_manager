@@ -95,9 +95,19 @@ ln -sf config/jetson/orin-nx-nvme.yaml jetson.yaml
 
 - `jetpack.version` — 透過 `config/jetson/_l4t_mapping.yaml` 解析為 L4T release 版本及 BSP / rootfs 下載 URL。
 - `hardware.board` — alias 對應到 NVIDIA `--target` 名稱。
-- `storage.device` — alias 對應到傳入 `--external-device` 的 kernel device 路徑。
+- `storage.device` — alias 對應到 storage mode（eMMC 為 `internal`，NVMe / USB / SD 為 `external`）以及 external mode 下 Jetson recovery initrd 看到的預設 kernel device 路徑。
 - `user.{username,password,hostname,autologin}` — 透過 `l4t_create_default_user.sh` 預先建立預設 user，首次開機跳過 OEM-config。
 - `network`（選用）— 預設 DHCP；設定 `method: static` 會在 rootfs 內安裝 `NetworkManager` system-connection profile。
+
+**多卡槽 USB reader / 非預設 device 編號。** USB SSD 或 microSD reader 在非預設 LUN 上曝出（典型是空卡槽 enumerate 為 `sda`，卡實際落在 `sdb`）時，加上 `storage.device_path` 覆蓋 alias 解析出的 kernel device：
+
+```yaml
+storage:
+  device: usb
+  device_path: sdb1      # 覆蓋 usb alias 預設的 sda1
+```
+
+要找對 device_path 值：先把儲存裝置接上 host，跑 `lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN`。Jetson recovery initrd 多數情況下 enumeration 與 host 一致。若第一次燒錄仍以 `Error opening /dev/sd*: No medium found` 中止，換下一個字母（`sdb1` → `sdc1`）— 見 [疑難排解](#error-error-opening-devsda-no-medium-foundmicrosd-透過-usb-reader)。把 `device_path` 與 `storage.device: emmc`（internal mode）同時設定會在驗證階段被拒絕。
 
 完整 schema 與註解見 `config/jetson/_example.yaml`。
 
@@ -278,6 +288,14 @@ sudo mkdir -p /var/lib/jetson_l4t
 sudo mount --bind /var/lib/jetson_l4t ./data/jetson_l4t
 ```
 
+若想驗證 setuid 真的會壞（這道 guard 是預防性的，見 [ADR 0003](../doc/adr/0003-skip-sdk-manager-for-flashing.md)），設 `JETSON_ALLOW_NON_UNIX_FS=1` 把 abort 降為警告：
+
+```bash
+JETSON_ALLOW_NON_UNIX_FS=1 make run -- -t prepare
+```
+
+opt-in 且會印明顯通知；正式燒錄前請先驗證燒出來的 Jetson `sudo` 可用。
+
 ### `prepare.sh` 中止：volume mismatch
 
 `.prepared.yaml` marker 顯示 volume 是為其他 JetPack / board 準備的，與目前 `jetson.yaml` 選擇的不同。清掉重跑：
@@ -345,7 +363,7 @@ Error: Return value 3
 
 ### `Error: Error opening /dev/sda: No medium found`（microSD 透過 USB reader）
 
-多卡槽 combo reader 會把每個卡槽當作獨立 LUN。預設的 `--external-device sda1` 開到空卡槽：
+多卡槽 combo reader 會把每個卡槽當作獨立 LUN，而 `usb` alias 預設對到 `sda1`。空卡槽 enumerate 為 `sda` 而卡實際在 `sdb` 時，燒錄在還沒碰到卡之前就中止：
 
 ```bash
 $ lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN
@@ -353,11 +371,18 @@ sda    0B  Generic-  SD/MMC          usb     # 空槽
 sdb  117.8G Generic-  Micro SD/M2    usb     # 卡實際在這
 ```
 
-解法：
+**找對 `device_path`**（host enumeration 多數情況下與 Jetson recovery initrd 一致，但不保證）：
 
-1. 把卡移到對應 `/dev/sda` 的槽（必要時用 microSD-to-SD 轉接卡）。
-2. 用單槽 microSD reader — 永遠 enumerate 為 `sda`。
-3. 修改 `jetson.yaml` 的 `storage.device` — 但 BSP `--external-device` 只認 alias 對應的路徑，若需自訂則在 `_l4t_mapping.yaml::storage_alias_to_device` 中加新項。
+1. 把儲存裝置按燒錄時的 USB 接法接上 host。
+2. 跑 `lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN`；`SIZE` 對應你的卡 / SSD 那一個就是目標 device。
+3. 在 `jetson.yaml` 設 `storage.device_path: <name>1`（例如 `sdb1`）— partition `1` 是 `l4t_initrd_flash.sh` 預期的。
+
+若第一次嘗試仍同樣失敗，Jetson initrd 在 bus 上 enumerate 的順序與 host 不同；換下一個字母（`sdb1` → `sdc1`）。完整 override 語義見 [Configure `jetson.yaml`](#configure-jetsonyaml)。
+
+其他變通方案（依推薦度排序）：
+
+1. 用單槽 microSD reader — 永遠 enumerate 為 `sda`，符合 alias 預設。
+2. 把卡移到對應 `/dev/sda` 的槽（必要時用 microSD-to-SD 轉接卡）。
 
 ### 燒錄到 APP partition 卡住（external storage）
 

@@ -30,15 +30,30 @@ hardware:
   board: agx-orin
 
 # ─── storage (REQUIRED) ────────────────────────────────────────────────
-# Target storage device. Resolved to the kernel device path via
-# `_l4t_mapping.yaml::storage_alias_to_device`.
+# Target storage device. The alias resolves through
+# `_l4t_mapping.yaml::storage_alias_to_device` to a storage *mode*
+# (internal / external) and (for external) a default kernel device path
+# as seen by the Jetson recovery initrd.
 #
 # Supported aliases:
-#   emmc → mmcblk0p1   (internal eMMC; AGX Orin devkit default)
-#   nvme → nvme0n1p1   (M.2 NVMe SSD)
-#   usb  → sda1        (USB-attached SSD or microSD-via-reader)
+#   emmc → mode=internal             (on-module eMMC; AGX Orin devkit default)
+#   nvme → mode=external, nvme0n1p1  (M.2 NVMe SSD)
+#   usb  → mode=external, sda1       (USB-attached SSD or microSD-via-reader)
+#
+# OPTIONAL `device_path` overrides the alias-resolved default for
+# external mode only. Use this when a multi-slot USB card reader exposes
+# the card on a non-default LUN (typically the empty slot enumerates as
+# sda and the card lands on sdb). To find the right value: plug the
+# storage into your host first and run
+#   lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN
+# The Jetson recovery initrd usually mirrors host enumeration. If the
+# first flash still aborts with `Error opening /dev/sd*: No medium
+# found`, try the next letter (sdb1 → sdc1) — see README troubleshooting.
+# Setting device_path together with an internal-mode alias (emmc) is
+# rejected at validation time.
 storage:
   device: emmc
+  #device_path: sdb1
 
 # ─── user (REQUIRED) ───────────────────────────────────────────────────
 # Pre-creates the default user so first boot skips OEM-config.
