@@ -288,6 +288,15 @@ sudo mkdir -p /var/lib/jetson_l4t
 sudo mount --bind /var/lib/jetson_l4t ./data/jetson_l4t
 ```
 
+The bind-mount target does not have to live on the system disk — any directory on an ext4 / xfs / btrfs partition works, including a path on a secondary SSD or an already-mounted data drive. Pick the one with enough free space (~15 GB for one full prepare):
+
+```bash
+sudo mkdir -p /media/<ext4-mount>/jetson_l4t
+sudo mount --bind /media/<ext4-mount>/jetson_l4t ./data/jetson_l4t
+```
+
+Either form of the bind mount is non-persistent; re-apply it after a reboot before running `make run -- -t prepare`.
+
 If you want to verify whether the setuid loss actually breaks your Jetson (the guard is preemptive — see [ADR 0003](doc/adr/0003-skip-sdk-manager-for-flashing.md)), set `JETSON_ALLOW_NON_UNIX_FS=1` to downgrade the abort to a warning:
 
 ```bash
