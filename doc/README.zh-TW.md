@@ -288,6 +288,15 @@ sudo mkdir -p /var/lib/jetson_l4t
 sudo mount --bind /var/lib/jetson_l4t ./data/jetson_l4t
 ```
 
+Bind-mount target 不必在系統碟上 — 任何 ext4 / xfs / btrfs 分割區內的目錄都可以，包含第二顆 SSD 或已掛載的資料碟。選一個剩餘空間夠的（一次完整 prepare 約需 15 GB）：
+
+```bash
+sudo mkdir -p /media/<ext4-mount>/jetson_l4t
+sudo mount --bind /media/<ext4-mount>/jetson_l4t ./data/jetson_l4t
+```
+
+兩種 bind mount 都不會 persistent；重開機後跑 `make run -- -t prepare` 前要再 mount 一次。
+
 僅供診斷用途，`JETSON_ALLOW_NON_UNIX_FS=1` 把 abort 降為警告：
 
 ```bash
