@@ -137,8 +137,8 @@ make run -- -t prepare
 
 # 階段 2 — 寫入 Jetson
 # Jetson 進入 APX recovery：斷電、按住 REC、接電、放開。
-# 在 host 驗證：`lsusb | grep 0955` 應出現如 0955:7023 NVIDIA Corp APX
-make build -- -t flash
+make build -- -t probe flash
+make run -- -t probe     # 確認 Jetson 在 APX (exit 0 = ready to flash)
 make run -- -t flash
 ```
 
@@ -163,6 +163,7 @@ sudo apt install -y nvidia-jetpack
 | `devel-test` | Lint（`shellcheck` + `hadolint`）+ bats smoke tests。僅 CI。 | 否 |
 | `prepare` | 階段 1 — 下載 BSP + sample rootfs、`apply_binaries.sh`、`l4t_create_default_user.sh`、`l4t_initrd_flash --no-flash`。 | 否 |
 | `flash` | 階段 2 — `l4t_initrd_flash --flash-only`。 | **是**，APX recovery |
+| `probe` | 診斷。掃 USB 找 NVIDIA vendor `0955`，標註每個裝置是否在 recovery 範圍，沒有 Jetson 在 APX 時 exit 非 0。flash 前跑一下確認連線, 不用承擔整個 flash 流程。 | 建議 |
 | `inspector` | SDK Manager GUI，用於瀏覽 JetPack 元件目錄。Install 按鈕在 Docker 內無作用 — 見 [Inspector](#inspectorsdk-manager-gui)。 | 否 |
 | `inspector-test` | `sdkmanager --ver` sanity check。僅 CI。 | 否 |
 
@@ -336,7 +337,13 @@ docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
 
 ### `Could not detect a board` / Jetson 未進入 recovery
 
-`flash.sh` 會檢查 `lsusb` 是否出現 NVIDIA VID `0955` + recovery PID（`7023` / `7223` / `7423` / `7523` / `7e19`），若無則中止。
+`flash.sh` 會檢查 `lsusb` 是否出現 NVIDIA VID `0955` + recovery PID（`7023` / `7223` / `7423` / `7523` / `7e19`），若無則中止。可以單獨跑 `probe` stage 做同樣檢查 — 測試不同線材 / port 時不用每次都跑完整 flash 流程：
+
+```bash
+make run -- -t probe
+```
+
+它會列出 bus 上所有 NVIDIA-vendor 裝置, 標註哪些在 recovery 範圍, 且只有至少一個在 recovery 時才 exit 0。
 
 進入 recovery mode 步驟：
 

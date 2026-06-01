@@ -36,6 +36,10 @@ _Avoid_: build stage, image stage, phase-1 stage
 Phase 2 of factory flash. Writes the pre-built images to a Jetson in APX recovery via `l4t_initrd_flash.sh --flash-only`. Container entrypoint is `script/flash.sh`.
 _Avoid_: write stage, deploy stage, phase-2 stage
 
+**probe stage**:
+Diagnostic. Scans host USB for NVIDIA-vendor (`0x0955`) devices, annotates which PIDs are in the Tegra APX recovery range, and exits non-zero unless at least one Jetson is in recovery. Config-free — does not read `jetson.yaml` and does not touch L4T data. Container entrypoint is `script/probe.sh`; reuses the vendor/PID list in `script/lib/usb.sh` that `flash.sh` also enforces.
+_Avoid_: sanity stage, lsusb stage
+
 **inspector stage**:
 SDK Manager GUI shipped as a **catalog browser only**. Its Install button does not work inside Docker (see [ADR 0003](doc/adr/0003-skip-sdk-manager-for-flashing.md)); the entrypoint prints a banner saying so. Not part of the flash workflow.
 _Avoid_: GUI stage, browser stage, sdkm stage

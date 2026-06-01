@@ -22,26 +22,10 @@ _HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${_HERE}/lib/yaml.sh"
 # shellcheck source=lib/volume.sh
 . "${_HERE}/lib/volume.sh"
+# shellcheck source=lib/usb.sh
+. "${_HERE}/lib/usb.sh"
 
 _step() { printf '\n\033[36m[flash] %s\033[0m\n' "$1" >&2; }
-
-# Tegra recovery USB vendor:product IDs. ECID-specific match is done by
-# tegrarcm_v2 once we know one is present; this initial probe just
-# confirms *some* NVIDIA recovery device is on the bus.
-_TEGRA_USB_VENDOR='0955'  # NVIDIA Corp
-# Known recovery PIDs across Orin family. Not exhaustive — new SKUs may
-# need to be added. Source: /usr/share/sdkmanager/Assets/Manifest.json.
-_TEGRA_USB_PIDS=('7023' '7223' '7423' '7523' '7e19')
-
-_usb_jetson_present() {
-  local pid
-  for pid in "${_TEGRA_USB_PIDS[@]}"; do
-    if lsusb -d "${_TEGRA_USB_VENDOR}:${pid}" 2>/dev/null | grep -q .; then
-      return 0
-    fi
-  done
-  return 1
-}
 
 main() {
   _step "1/5 Validating /etc/jetson.yaml"
@@ -78,10 +62,11 @@ main() {
   fi
 
   _step "4/5 Probing Jetson USB"
-  if ! _usb_jetson_present; then
+  if ! jetson_in_recovery; then
     emit_error \
       --category hardware \
-      --detail "No NVIDIA recovery USB device detected (vendor ${_TEGRA_USB_VENDOR})" \
+      --detail "No NVIDIA recovery USB device detected (vendor ${JETSON_USB_VENDOR})" \
+      --action "Run \`make run -- -t probe\` to see what is (or is not) on the bus" \
       --action "Power-cycle Jetson into recovery: power off, hold Force-Recovery, tap Reset, release Force-Recovery" \
       --action "Confirm on the host: \`lsusb | grep -i 'NVIDIA Corp'\`" \
       --action "If /dev hotplug is broken in container, restart the container — base v0.39.0 added rslave but old containers stay private"

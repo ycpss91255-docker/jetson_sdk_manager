@@ -137,8 +137,8 @@ make run -- -t prepare
 
 # Phase 2 — write to Jetson
 # Put Jetson into APX recovery: power off, hold REC, reconnect power, release.
-# Verify on host: `lsusb | grep 0955` shows e.g. 0955:7023 NVIDIA Corp APX
-make build -- -t flash
+make build -- -t probe flash
+make run -- -t probe     # confirm Jetson visible in APX (exits 0 on success)
 make run -- -t flash
 ```
 
@@ -163,6 +163,7 @@ Each phase records progress in `data/jetson_l4t/.../.prepared.yaml`. Re-running 
 | `devel-test` | Lint (`shellcheck` + `hadolint`) + bats smoke tests. CI-only. | No |
 | `prepare` | Phase 1 — download BSP + sample rootfs, `apply_binaries.sh`, `l4t_create_default_user.sh`, `l4t_initrd_flash --no-flash`. | No |
 | `flash` | Phase 2 — `l4t_initrd_flash --flash-only`. | **Yes**, in APX recovery |
+| `probe` | Diagnostic. Scans USB for NVIDIA vendor `0955`, annotates each device with recovery vs not, exits non-zero unless at least one Jetson is in APX. Run before flash to confirm the link without committing to a full flash. | Recommended |
 | `inspector` | SDK Manager GUI for browsing the JetPack component catalog. Install button does not work — see [Inspector](#inspector-sdk-manager-gui). | No |
 | `inspector-test` | `sdkmanager --ver` sanity check. CI-only. | No |
 
@@ -220,6 +221,7 @@ graph TD
     devel --> prepare["prepare\nCMD prepare.sh\n(host-side image build)"]
     EXT3 --> prepare
     devel --> flash["flash\nCMD flash.sh\n(USB write to Jetson)"]
+    devel --> probe["probe\nCMD probe.sh\n(lsusb 0955 sanity check)"]
     devel --> inspector["inspector\n+ SDK Manager + X11 libs\nCMD inspector-entrypoint.sh"]
     EXT4 --> inspector
 
@@ -336,7 +338,13 @@ Run once per host boot.
 
 ### `Could not detect a board` / Jetson not in recovery
 
-`flash.sh` checks `lsusb` for NVIDIA VID `0955` + a recovery PID (`7023` / `7223` / `7423` / `7523` / `7e19`) and aborts if none is present.
+`flash.sh` checks `lsusb` for NVIDIA VID `0955` + a recovery PID (`7023` / `7223` / `7423` / `7523` / `7e19`) and aborts if none is present. Run the `probe` stage to get the same check in isolation — useful for testing different cables / ports without losing the prepare-stage state:
+
+```bash
+make run -- -t probe
+```
+
+It prints every NVIDIA-vendor device on the bus, annotates which ones are in the recovery range, and exits 0 only when at least one is.
 
 Recovery mode entry, step-by-step:
 
