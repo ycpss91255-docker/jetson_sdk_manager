@@ -7,6 +7,7 @@
 #   devel-test      - Lint + bats smoke test (ephemeral)
 #   prepare         - NVIDIA factory flash phase 1 (host-side image build)
 #   flash           - NVIDIA factory flash phase 2 (write to Jetson over USB)
+#   probe           - Diagnostic: scan USB for Jetson APX recovery device
 #   inspector       - SDK Manager GUI for catalog browsing (NOT flashing)
 #   inspector-test  - inspector sanity check (ephemeral)
 
@@ -228,7 +229,7 @@ COPY .base/script/docker/wrapper /lint/wrapper
 COPY script/lib /lint/script_lib
 RUN shellcheck -S warning /lint/wrapper/*.sh /lint/lib/*.sh && \
     shellcheck -S warning \
-        /lint/prepare.sh /lint/flash.sh /lint/clean.sh \
+        /lint/prepare.sh /lint/flash.sh /lint/probe.sh /lint/clean.sh \
         /lint/inspector-entrypoint.sh \
         /lint/init_data_dirs.sh /lint/entrypoint.sh \
         /lint/script_lib/*.sh
@@ -251,6 +252,7 @@ ENV BATS_LIB_PATH="/usr/lib/bats"
 # and flash.sh end-to-end.
 COPY --chmod=0755 script/prepare.sh /opt/jetson_install/prepare.sh
 COPY --chmod=0755 script/flash.sh /opt/jetson_install/flash.sh
+COPY --chmod=0755 script/probe.sh /opt/jetson_install/probe.sh
 COPY --chmod=0755 script/lib /opt/jetson_install/lib
 
 # Smoke test (shared from template + repo-specific)
@@ -373,3 +375,23 @@ ARG USER
 USER "${USER}"
 
 CMD ["/opt/jetson_install/flash.sh"]
+
+############################## probe ##############################
+# Diagnostic stage: scan host USB for a Jetson in APX recovery. No
+# jetson.yaml, no L4T mapping, no Jetson required at build time —
+# probe is intentionally config-free so users can sanity-check the
+# host ↔ Jetson link before they commit to the prepare/flash flow.
+# See script/probe.sh + script/lib/usb.sh.
+FROM devel AS probe
+
+USER root
+
+# lsusb (usbutils) already in devel. Only the entry script + the
+# shared usb / errors helpers need to land in this stage.
+COPY --chmod=0755 script/probe.sh /opt/jetson_install/probe.sh
+COPY --chmod=0755 script/lib /opt/jetson_install/lib
+
+ARG USER
+USER "${USER}"
+
+CMD ["/opt/jetson_install/probe.sh"]
