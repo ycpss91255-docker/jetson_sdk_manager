@@ -39,6 +39,7 @@ NVIDIA SDK Manager の GUI / `--cli` フローは host 上の NFS server + `ipta
 - **QEMU binfmt**：`docker run --rm --privileged multiarch/qemu-user-static --reset -p yes`（boot ごとに 1 回）。
 - **USB buffer**：`echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb`（boot ごとに 1 回）。
 - **USB オートサスペンド**：Jetson を接続するポートでは無効化が必須。さもないと `tegrarcm_v2` が書き込み途中でハングします。`echo -1 | sudo tee /sys/module/usbcore/parameters/autosuspend`（boot ごとに 1 回）。
+- **`nfsd` カーネルモジュール**（`flash` 段階のみ）：`l4t_initrd_flash.sh` はローカル NFS エクスポートで Jetson の initrd にフラッシュペイロードを渡します。コンテナは host とカーネルを共有するため、host 側で読み込みます：`sudo modprobe nfsd`（boot ごとに 1 回）。未ロードだと `RPC: Program not registered` / `Error 114` で失敗します。
 
 ## `jetson.yaml` の設定
 

@@ -46,7 +46,7 @@ sudo apt update && sudo apt install -y nvidia-jetpack
 
 NVIDIA SDK Manager 的 GUI 與 `--cli` 流程，是透過在 host 上跑 NFS server、將 rootfs 經由 USB device-mode 匯出至裝置，並使用 `iptables` 橋接 host 網路堆疊來完成燒錄。在 Docker 內（即使加上 `--privileged --network host`）這個組合無法可靠運作：NFS server 綁定不穩、容器內 `iptables` 規則不一定能影響 host nftables、`usb-gadget` device-mode forwarding 失敗。典型症狀就是 [Flashing - 99% 卡死](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066)，NVIDIA 官方 Docker image 也有同樣問題。
 
-本 repo 直接繞過此路徑：**prepare** stage 使用 BSP 自帶的 `l4t_initrd_flash.sh --no-flash` 於 host 端產生燒錄 image（不需 Jetson、不需 NFS、不需 `iptables`）；**flash** stage 再透過單純的 `tegrarcm_v2` USB 連線以 `--flash-only` 寫入。
+本 repo 直接繞過此路徑：**prepare** stage 使用 BSP 自帶的 `l4t_initrd_flash.sh --no-flash` 於 host 端產生燒錄 image（不需 Jetson、不需 NFS、不需 `iptables`）；**flash** stage 以 `--flash-only` 寫入：Jetson 透過 `tegrarcm_v2` USB 連線開機進一個精簡 initrd,再從這條鏈路上的本地 NFS export 拉取 image。這個 export 仍需 host 載入 `nfsd` kernel 模組(見 [前置需求](#前置需求)),但與 SDK Manager 不同的是**不需** `iptables` 操作、**不需** `usb-gadget` device-mode forwarding,所以在 privileged 容器內能穩定運作。
 
 SDK Manager 仍保留於 **`inspector`** stage，用途是瀏覽 JetPack 的元件目錄、查詢有哪些 `.deb` 套件。其 Install 按鈕在 Docker 內仍然失效；entrypoint 會印 banner 提醒這點。
 
@@ -80,6 +80,13 @@ SDK Manager 仍保留於 **`inspector`** stage，用途是瀏覽 JetPack 的元�
   ```bash
   echo on | sudo tee /sys/bus/usb/devices/<bus>-<port>/power/control
   ```
+- **`nfsd` kernel 模組**（僅 `flash` 階段需要）— `l4t_initrd_flash.sh` 會在 Jetson 上開機一個精簡 initrd,並透過本地 NFS export 把燒錄 payload 餵給它。容器內含 NFS server,但與 host 共用 kernel,所以要在 host 上每次開機載入一次 `nfsd`:
+
+  ```bash
+  sudo modprobe nfsd
+  ```
+
+  用 `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf` 讓它重開機後仍生效。沒載入的話 flash 會以 `RPC: Program not registered` / `Return value 114` 失敗。`prepare` 不需要這個。
 - **Jetson 進入 APX recovery**（僅 `flash` 階段需要；`prepare` 不需連 Jetson）。
 
 ## 設定 `jetson.yaml`
@@ -378,6 +385,26 @@ lsusb | grep -i 'NVIDIA Corp'
 | （無輸出） | 未偵測到 — 換線 / 換 port / 直連（不要用 hub） |
 
 Recovery mode 走 USB 2.0（480 Mbps），這是正常的 — APX 模式下 USB 3 controller 不啟用。
+
+### `clnt_create: RPC: Program not registered` / `NFS server is not running` / `Error 114`
+
+`flash` 階段的 `l4t_initrd_flash.sh` 透過本地 NFS export 把燒錄 payload 餵給 Jetson 的 initrd,但容器與 host 共用 kernel,而 host 沒載入 `nfsd` 模組:
+
+```
+ * Not starting NFS kernel daemon: no support in current kernel.
+clnt_create: RPC: Program not registered
+NFS server is not running
+make: *** [Makefile:41: run] Error 114
+```
+
+在 host 上(不是容器內)載入它,再重跑 flash:
+
+```bash
+sudo modprobe nfsd
+make run -- -t flash
+```
+
+用 `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf` 讓它重開機後仍生效。見 [前置需求](#前置需求)。`flash.sh` 現在會先檢查並以相同指引提早中止。
 
 ### `ERROR: might be timeout in USB write` / `Return value 3`
 

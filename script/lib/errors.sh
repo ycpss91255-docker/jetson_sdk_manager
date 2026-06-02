@@ -32,6 +32,7 @@ declare -gA _CATEGORY_HINTS=(
   [volume-mismatch]="Docker volume contents disagree with jetson.yaml — run a clean target."
   [permission]="Filesystem cannot preserve setuid / ownership (NTFS, exFAT) — see README."
   [hardware]="Jetson not in APX recovery or USB endpoint stale — see README."
+  [host-config]="Host kernel / module prerequisite missing — see README Prerequisites."
 )
 
 emit_error() {

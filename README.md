@@ -49,7 +49,7 @@ sudo apt update && sudo apt install -y nvidia-jetpack
 
 NVIDIA SDK Manager's GUI / `--cli` workflow flashes a Jetson by running an NFS server on the host and exporting the rootfs to the device over a USB device-mode link, while bridging it through the host's network stack via `iptables`. Inside Docker (even with `--privileged --network host`) this combination is broken: NFS server cannot bind reliably, `iptables` rules from inside the container do not always reach the host's nftables, and `usb-gadget` device-mode forwarding fails. The symptom is the well-known [Flashing - 99% stall](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066) that affects NVIDIA's own Docker image as well.
 
-This repo bypasses that path entirely. The **prepare** stage uses the BSP's own `l4t_initrd_flash.sh --no-flash` to build flash images host-side (no Jetson, no NFS, no `iptables`); the **flash** stage then writes them with `--flash-only` over a plain `tegrarcm_v2` USB link.
+This repo bypasses that path entirely. The **prepare** stage uses the BSP's own `l4t_initrd_flash.sh --no-flash` to build flash images host-side (no Jetson, no NFS, no `iptables`); the **flash** stage then writes them with `--flash-only`: the Jetson boots a minimal initrd over the `tegrarcm_v2` USB link and pulls the images from a local NFS export on that same link. That export still needs the host's `nfsd` kernel module loaded (see [Prerequisites](#prerequisites)), but — unlike SDK Manager — there is no `iptables` manipulation and no `usb-gadget` device-mode forwarding, so it works reliably in a privileged container.
 
 SDK Manager is still shipped — in the **`inspector`** stage — as a catalog browser for looking up which `.deb` packages a given JetPack release contains. Its Install button stays broken inside Docker; the entrypoint prints a banner saying so.
 
@@ -83,6 +83,13 @@ SDK Manager is still shipped — in the **`inspector`** stage — as a catalog b
   ```bash
   echo on | sudo tee /sys/bus/usb/devices/<bus>-<port>/power/control
   ```
+- **`nfsd` kernel module** (for the `flash` stage only) — `l4t_initrd_flash.sh` boots a minimal initrd on the Jetson and serves the flash payload to it over a local NFS export. The container ships the NFS server but shares the host kernel, so load `nfsd` on the host once per boot:
+
+  ```bash
+  sudo modprobe nfsd
+  ```
+
+  Persist it across reboots with `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`. Without it the flash dies with `RPC: Program not registered` / `Return value 114`. `prepare` does not need this.
 - **Jetson in APX recovery** (for the `flash` stage only; `prepare` needs no Jetson connected).
 
 ## Configure `jetson.yaml`
@@ -381,6 +388,26 @@ lsusb | grep -i 'NVIDIA Corp'
 | (nothing) | Not detected — try a different cable / port / direct connection (no hub) |
 
 Recovery mode runs over USB 2.0 (480 Mbps); this is normal — the USB 3 controller is inactive in APX.
+
+### `clnt_create: RPC: Program not registered` / `NFS server is not running` / `Error 114`
+
+The `flash` stage's `l4t_initrd_flash.sh` serves the flash payload to the Jetson's initrd over a local NFS export, but the container shares the host kernel and the host has not loaded the `nfsd` module:
+
+```
+ * Not starting NFS kernel daemon: no support in current kernel.
+clnt_create: RPC: Program not registered
+NFS server is not running
+make: *** [Makefile:41: run] Error 114
+```
+
+Load it on the host (not inside the container), then re-run the flash:
+
+```bash
+sudo modprobe nfsd
+make run -- -t flash
+```
+
+Persist across reboots with `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`. See [Prerequisites](#prerequisites). `flash.sh` now pre-checks this and aborts early with the same guidance.
 
 ### `ERROR: might be timeout in USB write` / `Return value 3`
 

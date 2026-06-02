@@ -10,8 +10,9 @@
 #   2. Resolve target + storage device
 #   3. Assert volume is prepared (and matches jetson.yaml)
 #   4. Probe USB for tegra recovery device
-#   5. l4t_initrd_flash.sh --flash-only
-#   6. Print first-boot guidance (apt install nvidia-jetpack)
+#   5. Check host NFS kernel support (initrd flash serves over NFS)
+#   6. l4t_initrd_flash.sh --flash-only
+#   7. Print first-boot guidance (apt install nvidia-jetpack)
 
 set -euo pipefail
 
@@ -28,14 +29,14 @@ _HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _step() { printf '\n\033[36m[flash] %s\033[0m\n' "$1" >&2; }
 
 main() {
-  _step "1/5 Validating /etc/jetson.yaml"
+  _step "1/6 Validating /etc/jetson.yaml"
   local jp board storage_alias storage_device_path hw_target
   jp=$(yaml_get "${JETSON_YAML}" '.jetpack.version')
   board=$(yaml_get "${JETSON_YAML}" '.hardware.board')
   storage_alias=$(yaml_get "${JETSON_YAML}" '.storage.device')
   storage_device_path=$(yaml_get_optional "${JETSON_YAML}" '.storage.device_path' '')
 
-  _step "2/5 Resolving target + storage device"
+  _step "2/6 Resolving target + storage device"
   hw_target=$(resolve_board_target "${board}")
   # Assign-then-eval so a failed resolve aborts here with its own action
   # message instead of being swallowed by eval and crashing later (set -u).
@@ -46,7 +47,7 @@ main() {
     "${hw_target}" "${storage_alias}" "${STORAGE_MODE}" \
     "${STORAGE_DEVICE:+, device=${STORAGE_DEVICE}}" >&2
 
-  _step "3/5 Asserting volume prepared"
+  _step "3/6 Asserting volume prepared"
   local state
   state=$(volume_state "${jp}" "${hw_target}")
   if [[ "${state}" == "empty" ]]; then
@@ -65,7 +66,7 @@ main() {
     exit 1
   fi
 
-  _step "4/5 Probing Jetson USB"
+  _step "4/6 Probing Jetson USB"
   if ! jetson_in_recovery; then
     emit_error \
       --category hardware \
@@ -78,7 +79,29 @@ main() {
   fi
   printf '  Recovery device found\n' >&2
 
-  _step "5/5 Flashing (l4t_initrd_flash --flash-only)"
+  _step "5/6 Checking host NFS kernel support"
+  # l4t_initrd_flash boots a minimal initramfs on the Jetson and serves the
+  # flash payload to it over NFS (a plain export on the USB/RNDIS link — no
+  # iptables / usb-gadget forwarding, unlike SDK Manager). The container has
+  # nfs-kernel-server installed, but it shares the host kernel: if the host's
+  # nfsd module is not loaded, the server cannot start and the flash dies with
+  # an opaque "RPC: Program not registered" / "Return value 114". Catch it here
+  # with an actionable message instead. `nfsd` in /proc/filesystems is present
+  # iff the module is loaded in the shared kernel. (Path overridable so the
+  # smoke test can drive both branches without touching the real /proc.)
+  local _proc_fs="${NFS_PROC_FILESYSTEMS:-/proc/filesystems}"
+  if ! grep -qw nfsd "${_proc_fs}" 2>/dev/null; then
+    emit_error \
+      --category host-config \
+      --detail "Host kernel nfsd module not loaded — l4t_initrd_flash serves the payload over NFS and cannot start its server without it" \
+      --action "On the HOST (not in this container) run: sudo modprobe nfsd" \
+      --action "Make it persistent across reboots: echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf" \
+      --action "Then re-run: make run -- -t flash"
+    exit 1
+  fi
+  printf '  nfsd kernel support present\n' >&2
+
+  _step "6/6 Flashing (l4t_initrd_flash --flash-only)"
   local l4t_dir
   l4t_dir=$(l4t_root_path "${jp}" "${hw_target}")
   if [[ "${STORAGE_MODE}" == "internal" ]]; then
