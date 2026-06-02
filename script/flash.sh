@@ -100,7 +100,9 @@ main() {
 
 First-boot checklist:
   1. Wait ~2 min for first-boot config to settle.
-  2. SSH or open the desktop session.
+  2. Reach the Jetson over the USB-C cable — L4T exposes a fixed
+     192.168.55.1 (no network config needed): ssh <username>@192.168.55.1
+     — or open the desktop session.
   3. Install JetPack SDK components via OTA apt:
 
        sudo apt update && sudo apt install -y nvidia-jetpack

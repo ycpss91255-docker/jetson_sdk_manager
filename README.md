@@ -155,6 +155,16 @@ sudo apt install -y nvidia-jetpack
 
 This installs CUDA, cuDNN, TensorRT, VPI, multimedia APIs, container runtime, etc. — the same component set SDK Manager would push, just pulled directly by the Jetson.
 
+### Headless first connection (USB, no network setup)
+
+The flashed L4T rootfs ships NVIDIA's USB device-mode service, so the Jetson is reachable at a fixed **`192.168.55.1`** over the same USB-C cable used to flash — no `jetson.yaml` `network:` config required:
+
+```bash
+ssh <username>@192.168.55.1     # username / password from jetson.yaml's user.* block
+```
+
+The host auto-configures a `192.168.55.x` address on the USB network interface (check with `ip a`). This link is independent of the optional [`network:`](#configure-jetsonyaml) block — which configures the Jetson's Ethernet / Wi-Fi via NetworkManager — and both coexist. The `192.168.55.1` address is baked into L4T and cannot be changed from this repo.
+
 ### Resume after interruption
 
 Each phase records progress in `data/jetson_l4t/.../.prepared.yaml`. Re-running `make run -- -t prepare` skips completed steps (BSP download, rootfs extraction, `apply_binaries.sh`, user creation, image generation). A JetPack / board change is detected as a mismatch and aborts with an action message pointing at `./script/clean.sh l4t`.

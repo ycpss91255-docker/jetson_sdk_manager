@@ -152,6 +152,16 @@ sudo apt install -y nvidia-jetpack
 
 安裝 CUDA、cuDNN、TensorRT、VPI、多媒體 API、container runtime 等。與 SDK Manager 推送的套件集相同，只是改由 Jetson 自行拉取。
 
+### 首次連線（USB，免設定網路）
+
+燒錄進去的 L4T rootfs 內建 NVIDIA 的 USB device-mode 服務，所以 Jetson 會在燒錄用的同一條 USB-C 線上固定以 **`192.168.55.1`** 對外，**不需要** `jetson.yaml` 的 `network:` 設定：
+
+```bash
+ssh <username>@192.168.55.1     # 帳號 / 密碼來自 jetson.yaml 的 user.* 區塊
+```
+
+Host 端會自動在 USB 網路介面配上 `192.168.55.x`（用 `ip a` 確認）。這條鏈路與選用的 [`network:`](#設定-jetsonyaml) 區塊（設定 Jetson 的乙太 / Wi-Fi，走 NetworkManager）互相獨立、可並存。`192.168.55.1` 是 L4T 內建寫死的，無法從本 repo 更改。
+
 ### 中斷後續跑
 
 每個階段會將進度記錄在 `data/jetson_l4t/.../.prepared.yaml`。重新執行 `make run -- -t prepare` 會略過已完成步驟（BSP 下載、rootfs 解壓、`apply_binaries.sh`、user 建立、image 產生）。若 JetPack / board 改變，會被偵測為 mismatch 並以 action 訊息中止，提示執行 `./script/clean.sh l4t`。
