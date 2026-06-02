@@ -37,7 +37,11 @@ main() {
 
   _step "2/5 Resolving target + storage device"
   hw_target=$(resolve_board_target "${board}")
-  eval "$(resolve_storage_device "${storage_alias}" "${storage_device_path}")"
+  # Assign-then-eval so a failed resolve aborts here with its own action
+  # message instead of being swallowed by eval and crashing later (set -u).
+  local _storage_env
+  _storage_env=$(resolve_storage_device "${storage_alias}" "${storage_device_path}") || exit 1
+  eval "${_storage_env}"
   printf '  Target:  %s\n  Storage: %s (mode=%s%s)\n' \
     "${hw_target}" "${storage_alias}" "${STORAGE_MODE}" \
     "${STORAGE_DEVICE:+, device=${STORAGE_DEVICE}}" >&2

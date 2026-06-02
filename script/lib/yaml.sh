@@ -83,6 +83,19 @@ resolve_l4t_release() {
       --action "Or add a new entry — see _l4t_mapping.yaml header for instructions"
     return 1
   fi
+  # bsp_url / rootfs_url feed download_if_missing directly. A typo'd or
+  # absent key yields the literal string 'null' from yq, which wget then
+  # tries to fetch ("wget failed for null") — surface a schema error that
+  # names the missing key instead. L4T_ARCHIVE_TAG is not consumed by the
+  # download path, so leave it lenient.
+  if [[ -z "${bsp}" || "${bsp}" == "null" || -z "${rootfs}" || "${rootfs}" == "null" ]]; then
+    emit_error \
+      --category validate \
+      --detail "JetPack '${jp}' entry in ${L4T_MAPPING_YAML} is missing bsp_url / rootfs_url" \
+      --action "Add both bsp_url and rootfs_url under jetpack_to_l4t.\"${jp}\"" \
+      --action "Copy the URLs from https://developer.nvidia.com/embedded/jetson-linux-archive"
+    return 1
+  fi
   printf 'L4T_RELEASE=%q\nL4T_ARCHIVE_TAG=%q\nBSP_URL=%q\nROOTFS_URL=%q\n' \
     "${release}" "${tag}" "${bsp}" "${rootfs}"
 }

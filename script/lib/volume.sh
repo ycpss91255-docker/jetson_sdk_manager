@@ -58,9 +58,13 @@ volume_state() {
     return 0
   fi
 
-  local recorded
+  local recorded recorded_hw
   recorded=$(yq -r '.jetpack_version' "${marker}" 2>/dev/null || true)
-  if [[ "${recorded}" == "${jp}" ]]; then
+  recorded_hw=$(yq -r '.hw_targets' "${marker}" 2>/dev/null || true)
+  # Both halves of the prepared-for identity must match: a JetPack bump
+  # AND a board change are each a mismatch. hw_targets was recorded but
+  # never compared before — path separation alone is not the guarantee.
+  if [[ "${recorded}" == "${jp}" && "${recorded_hw}" == "${hw}" ]]; then
     printf 'match'
   else
     printf 'mismatch'
@@ -86,10 +90,14 @@ volume_assert_match() {
   esac
 }
 
-# volume_record_phase <jetpack_version> <hw_targets> <phase>
-# Append/update phase in the marker yaml.
-volume_record_phase() {
-  local jp="$1" hw="$2" phase="$3"
+# volume_init_marker <jetpack_version> <hw_targets>
+# Create the marker with an empty phase list if it does not exist yet.
+# Called by prepare.sh BEFORE the first extraction so a crash mid-phase
+# (before any volume_record_phase) leaves a matching marker behind — the
+# next run then resumes (state=match, phases=[]) instead of seeing a
+# non-empty dir with no marker and aborting as a forced-clean mismatch.
+volume_init_marker() {
+  local jp="$1" hw="$2"
   local marker
   marker="$(volume_marker_path "${jp}" "${hw}")"
   mkdir -p "$(dirname "${marker}")"
@@ -98,6 +106,15 @@ volume_record_phase() {
     printf 'jetpack_version: "%s"\nhw_targets: "%s"\nphases: []\n' \
       "${jp}" "${hw}" >"${marker}"
   fi
+}
+
+# volume_record_phase <jetpack_version> <hw_targets> <phase>
+# Append/update phase in the marker yaml.
+volume_record_phase() {
+  local jp="$1" hw="$2" phase="$3"
+  local marker
+  marker="$(volume_marker_path "${jp}" "${hw}")"
+  volume_init_marker "${jp}" "${hw}"
 
   yq -i ".phases |= (. + [\"${phase}\"] | unique)" "${marker}"
 }

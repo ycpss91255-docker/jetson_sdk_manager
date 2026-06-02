@@ -38,6 +38,7 @@ NVIDIA SDK Manager 的 GUI 与 `--cli` 流程依赖 host 上的 NFS server + `ip
 - **Host 文件系统须为 ext4 / xfs / btrfs**。NTFS / exFAT / `fuseblk` / FAT 会丢掉 setuid 与 ownership，导致烧录后 Jetson 的 `sudo` 拒绝启动。`prepare.sh` 会在偵測到非 unix FS 时以 action 讯息中止。
 - **QEMU binfmt**：`docker run --rm --privileged multiarch/qemu-user-static --reset -p yes`（每次开机一次）。
 - **USB buffer**：`echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb`（每次开机一次）。
+- **USB auto-suspend**：连接 Jetson 的端口必须关闭，否则 `tegrarcm_v2` 可能在写入中途卡死。最简单是本次开机全局关掉：`echo -1 | sudo tee /sys/module/usbcore/parameters/autosuspend`（每次开机一次）。
 
 ## 设定 `jetson.yaml`
 
