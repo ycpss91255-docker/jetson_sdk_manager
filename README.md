@@ -39,6 +39,9 @@ ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # pick a preset
 make run -- -t prepare    # Phase 1: download BSP + build flash images (~30 min)
 # Put Jetson in APX recovery (hold REC + tap RESET)
 make run -- -t flash      # Phase 2: write images to Jetson (~10 min)
+
+# ...or, with the Jetson already in APX recovery, do both in one command:
+make run -- -t prepare && make run -- -t flash
 ```
 
 > This is the minimum that flashes end-to-end. If a flash stalls mid-write, also apply the USB tweaks in [Prerequisites](#prerequisites). `make run` auto-builds a missing stage image on first invocation.

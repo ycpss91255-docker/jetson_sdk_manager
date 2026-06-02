@@ -23,6 +23,9 @@ ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # preset を 1 つ選ぶ
 make run -- -t prepare    # フェーズ 1：BSP ダウンロード + フラッシュイメージ生成（約 30 分）
 # Jetson を APX recovery に入れる（REC を押しながら RESET をタップ）
 make run -- -t flash      # フェーズ 2：Jetson に書き込み（約 10 分）
+
+# ...または Jetson を APX recovery に入れた状態で、1 コマンドで両フェーズを実行:
+make run -- -t prepare && make run -- -t flash
 ```
 
 Jetson の初回起動後、デバイス上で JetPack コンポーネントをインストール：
