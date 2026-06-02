@@ -10,15 +10,37 @@
 # `prepare` reads /etc/jetson.yaml (bind-mounted from the symlink) and
 # writes flash images to a Docker named volume. `flash` reads the same
 # config and writes the volume's images to the connected Jetson.
+#
+# WHICH STAGE READS WHAT, and whether changing it after `prepare`
+# requires re-running `prepare` (most settings are BAKED INTO the images
+# at prepare time; `flash` only re-reads a few to pick the right images):
+#
+#   field              prepare  flash  inspector  change after prepare?
+#   jetpack.version      yes     yes    hint       re-prepare (mismatch abort)
+#   hardware.board       yes     yes    hint       re-prepare (mismatch abort)
+#   storage.device       yes     yes    no         re-prepare if MODE changes*
+#   storage.device_path  yes     yes    no         OK at flash time (external)
+#   user.*               yes     no     no         re-prepare (baked into rootfs)
+#   network.*            yes     no     no         re-prepare (baked into rootfs)
+#
+#   (`probe` reads nothing - it is config-free.)
+#
+#   * internal (emmc) vs external (nvme/usb) build DIFFERENT images. The
+#     volume mismatch guard only checks jetpack+board, NOT storage, so it
+#     will NOT stop you from flashing internally-built images with an
+#     external dispatch (or vice-versa). If you switch storage MODE, run
+#     `./script/clean.sh build` then re-`prepare`. Switching device_path
+#     (or between external aliases) only changes where `flash` writes and
+#     is safe without re-preparing.
 
-# ─── jetpack (REQUIRED) ────────────────────────────────────────────────
+# ─── jetpack (REQUIRED) ──────────────────── [prepare + flash; inspector hint] ─
 # JetPack release tag. Internal `_l4t_mapping.yaml` resolves this to an
 # L4T release version + the BSP / sample-rootfs download URLs.
 # Supported values: see top-level keys in `_l4t_mapping.yaml`.
 jetpack:
   version: "6.2.2"
 
-# ─── hardware (REQUIRED) ───────────────────────────────────────────────
+# ─── hardware (REQUIRED) ───────────────────── [prepare + flash; inspector hint] ─
 # Board alias. Resolved to the NVIDIA-canonical `--target` name via
 # `_l4t_mapping.yaml::board_alias_to_target`.
 #
@@ -29,7 +51,7 @@ jetpack:
 hardware:
   board: agx-orin
 
-# ─── storage (REQUIRED) ────────────────────────────────────────────────
+# ─── storage (REQUIRED) ─────────────────────────────────── [prepare + flash] ─
 # Target storage device. The alias resolves through
 # `_l4t_mapping.yaml::storage_alias_to_device` to a storage *mode*
 # (internal / external) and (for external) a default kernel device path
@@ -55,7 +77,7 @@ storage:
   device: emmc
   #device_path: sdb1
 
-# ─── user (REQUIRED) ───────────────────────────────────────────────────
+# ─── user (REQUIRED) ──────────────────────── [prepare only - baked into rootfs] ─
 # Pre-creates the default user so first boot skips OEM-config.
 # Equivalent to running `l4t_create_default_user.sh` with these args.
 user:
@@ -64,7 +86,7 @@ user:
   hostname: jetson-agx
   autologin: false  # true: pre-login at boot; false: prompt at gdm.
 
-# ─── network (OPTIONAL) ────────────────────────────────────────────────
+# ─── network (OPTIONAL) ───────────────────── [prepare only - baked into rootfs] ─
 # Pre-configures NetworkManager on the rootfs. Omit this section
 # entirely to let the user configure networking from the desktop on
 # first boot (DHCP via NetworkManager default profile).
