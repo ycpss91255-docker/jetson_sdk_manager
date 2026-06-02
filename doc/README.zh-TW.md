@@ -41,13 +41,7 @@ make run -- -t flash      # 階段 2：寫入 Jetson（約 10 分鐘）
 make run -- -t prepare && make run -- -t flash
 ```
 
-> `./script/host_setup.sh` 把每次開機要做的 host 前置(QEMU binfmt、`nfsd`、USB autosuspend/buffer 調整)一次跑完——各項用途與持久化方式見 [前置需求](#前置需求)。`make run` 首次會自動 build 缺少的 stage image。
-
-Jetson 首次開機後，於裝置上安裝 JetPack 元件：
-
-```bash
-sudo apt update && sudo apt install -y nvidia-jetpack
-```
+> `./script/host_setup.sh` 一次跑完每次開機要做的 host 前置(見 [前置需求](#前置需求));`make run` 首次會自動 build 缺少的 stage image。想看有解說的完整流程——各 stage 的 `make build`、首次開機裝 `nvidia-jetpack`、headless 連線、中斷續跑——見 [快速開始](#快速開始)。
 
 ## 為什麼用工廠燒錄而非 SDK Manager
 
@@ -398,14 +392,9 @@ ERROR: might be timeout in USB write.
 Error: Return value 3
 ```
 
-前次燒錄中斷遺留的 USB endpoint 狀態。需要**硬體**斷電 — `tegrarcm_v2 --reboot recovery` 不夠：
+前次燒錄中斷遺留的 USB endpoint 狀態。需要**硬體** power-cycle 重新進入 APX recovery——斷電、按住 REC、接電、放開(`tegrarcm_v2 --reboot recovery` 不夠)。
 
-1. Jetson 完全斷電。
-2. 按住 **Recovery**。
-3. 接電。
-4. 2–3 秒後放開 Recovery。
-
-同時確認本次開機已套用 [前置需求](#前置需求) 中的 USB buffer size 調整。
+同時確認本次開機已跑過 `./script/host_setup.sh`——它會拉高 USB buffer 並關閉 autosuspend(見 [前置需求](#前置需求))。
 
 ### `Error: Error opening /dev/sda: No medium found`（microSD 透過 USB reader）
 

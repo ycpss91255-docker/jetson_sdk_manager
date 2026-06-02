@@ -41,13 +41,7 @@ make run -- -t flash      # Phase 2: write images to Jetson (~10 min)
 make run -- -t prepare && make run -- -t flash
 ```
 
-> `./script/host_setup.sh` bundles the per-boot host prerequisites (QEMU binfmt, `nfsd`, USB autosuspend/buffer tweaks) — see [Prerequisites](#prerequisites) for what each does and how to persist them. `make run` auto-builds a missing stage image on first invocation.
-
-After first boot, install JetPack components on the Jetson itself:
-
-```bash
-sudo apt update && sudo apt install -y nvidia-jetpack
-```
+> `./script/host_setup.sh` bundles the per-boot host prerequisites (see [Prerequisites](#prerequisites)); `make run` auto-builds a missing stage image on first invocation. For an explained walkthrough — `make build` per stage, post-flash `nvidia-jetpack` install, headless access, and resume behaviour — see [Quick Start](#quick-start).
 
 ## Why factory flash, not SDK Manager
 
@@ -398,12 +392,7 @@ ERROR: might be timeout in USB write.
 Error: Return value 3
 ```
 
-Stale USB endpoint state from a previous interrupted flash. A **hardware** power cycle is required — `tegrarcm_v2 --reboot recovery` is not enough:
-
-1. Disconnect Jetson power completely.
-2. Hold **Recovery**.
-3. Reconnect power.
-4. Release Recovery after 2–3 seconds.
+Stale USB endpoint state from a previous interrupted flash. A **hardware** power cycle back into APX recovery is required — power off, hold REC, reconnect power, release (`tegrarcm_v2 --reboot recovery` is not enough).
 
 Also confirm `./script/host_setup.sh` ran this boot — it raises the USB buffer and disables autosuspend (see [Prerequisites](#prerequisites)).
 
