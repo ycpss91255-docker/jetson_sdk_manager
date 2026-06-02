@@ -65,6 +65,22 @@ main() {
       --action "Re-run \`make run -- -t prepare\` to finish image generation"
     exit 1
   fi
+  # The volume marker tracks jetpack+board, not storage. Catch a storage-mode
+  # change in jetson.yaml since prepare (e.g. emmc→nvme) here — the images on
+  # disk are for the recorded mode and flashing them under the other mode's
+  # dispatch fails or corrupts the target. Empty recorded mode = legacy marker
+  # prepared before this field existed; don't block those.
+  local recorded_mode
+  recorded_mode=$(volume_storage_mode "${jp}" "${hw_target}")
+  if [[ -n "${recorded_mode}" && "${recorded_mode}" != "${STORAGE_MODE}" ]]; then
+    emit_error \
+      --category volume-mismatch \
+      --detail "Volume was prepared for storage mode '${recorded_mode}' but jetson.yaml now resolves to '${STORAGE_MODE}'" \
+      --action "internal (emmc) and external (nvme/usb) build different images — flashing across modes will fail or corrupt the target" \
+      --action "Rebuild for the new mode: \`make run -- -t prepare\` regenerates the images, then re-run flash" \
+      --action "Or revert storage.device in jetson.yaml to the prepared mode (${recorded_mode})"
+    exit 1
+  fi
 
   _step "4/6 Probing Jetson USB"
   if ! jetson_in_recovery; then

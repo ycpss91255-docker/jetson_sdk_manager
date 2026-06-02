@@ -108,6 +108,20 @@ main() {
   # leaves a matching ledger behind — the next run resumes instead of
   # treating the half-extracted tree as a forced-clean mismatch.
   volume_init_marker "${jp}" "${hw_target}"
+  # internal (emmc) and external (nvme/usb) produce different flash images.
+  # If the prepared mode differs from what jetson.yaml now resolves to, drop
+  # the images phase so step 10 regenerates them for the new mode (the rootfs
+  # tree itself is mode-independent), then record the new mode. Without this,
+  # re-prepare would skip image generation and flash would write wrong-mode
+  # images.
+  local _recorded_mode
+  _recorded_mode=$(volume_storage_mode "${jp}" "${hw_target}")
+  if [[ -n "${_recorded_mode}" && "${_recorded_mode}" != "${STORAGE_MODE}" ]]; then
+    printf '  Storage mode changed (%s → %s) — flash images will be regenerated\n' \
+      "${_recorded_mode}" "${STORAGE_MODE}" >&2
+    volume_drop_phase "${jp}" "${hw_target}" "images"
+  fi
+  volume_record_storage_mode "${jp}" "${hw_target}" "${STORAGE_MODE}"
 
   _step "4/10 Downloading BSP + rootfs tarballs (skip if cached)"
   local bsp_tar rootfs_tar

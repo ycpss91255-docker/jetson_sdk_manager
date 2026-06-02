@@ -100,3 +100,26 @@ setup() {
   run volume_assert_match "${JP}" "${HW}"   # match
   assert_success
 }
+
+@test "storage mode round-trips through the marker" {
+  volume_init_marker "${JP}" "${HW}"
+  volume_record_storage_mode "${JP}" "${HW}" "external"
+  run volume_storage_mode "${JP}" "${HW}"
+  assert_output 'external'
+}
+
+@test "volume_storage_mode is empty for a legacy marker without the field" {
+  volume_init_marker "${JP}" "${HW}"   # base marker, no storage_mode
+  run volume_storage_mode "${JP}" "${HW}"
+  assert_output ''
+}
+
+@test "volume_drop_phase removes only the named phase" {
+  volume_record_phase "${JP}" "${HW}" "bsp"
+  volume_record_phase "${JP}" "${HW}" "images"
+  volume_drop_phase "${JP}" "${HW}" "images"
+  run volume_phase_done "${JP}" "${HW}" "images"
+  assert_failure
+  run volume_phase_done "${JP}" "${HW}" "bsp"
+  assert_success
+}
