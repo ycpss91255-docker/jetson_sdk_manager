@@ -59,43 +59,14 @@ SDK Manager is still shipped — in the **`inspector`** stage — as a catalog b
 
 ## Prerequisites
 
-> **Shortcut:** `./script/host_setup.sh` applies the per-boot host setup below (QEMU binfmt, `nfsd`, USB autosuspend/buffer) in one command. Run it on the host before connecting the Jetson. The bullets below explain what each does and how to make them persistent.
-
 - **Host OS**: x86_64 Linux.
 - **Docker Engine** >= v20.10.6.
 - **Host filesystem of the repo: ext4 / xfs / btrfs.** `apply_binaries.sh` produces setuid binaries (`sudo`) and root-owned files inside the rootfs tree. NTFS / exFAT / `fuseblk` / FAT silently strip setuid and ownership during extraction, which yields a flashed Jetson whose `sudo` refuses to start. `prepare.sh` aborts with an action message if the path is on one of these filesystems; move the repo (or bind-mount an ext4 directory over `./data/jetson_l4t/`) before re-running.
-- **QEMU binfmt** — required for running ARM64 binaries from the BSP's tools/ during prepare:
+- **Per-boot host setup — `./script/host_setup.sh`.** Run it on the host before connecting the Jetson. One command registers **QEMU binfmt** (run the BSP's ARM64 tools during `prepare`), loads the **`nfsd`** module (the `flash` stage serves the payload to the Jetson's initrd over a local NFS export — no `iptables` / `usb-gadget` forwarding), disables **USB autosuspend** and raises the **`usbfs` buffer** to 2048 MB (the last two stop `tegrarcm_v2` / NFS bulk writes stalling mid-flash). Everything resets on reboot, so re-run it each boot. Two things it does **not** do for you:
+  - **Persist `nfsd`** to skip it next boot: `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`.
+  - **Per-device autosuspend override**, if one port still parks the device (find it via `lsusb -t` once the Jetson is in APX): `echo on | sudo tee /sys/bus/usb/devices/<bus>-<port>/power/control`.
 
-  ```bash
-  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-  ```
-
-  Run once per host boot. Registers ARM64 binary translation in the kernel via Docker — no host packages needed.
-
-- **USB host buffer** — `tegrarcm_v2` bulk writes occasionally stall at the default 16 MB. Raise once per host boot:
-
-  ```bash
-  echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
-  ```
-
-- **USB auto-suspend** — must be off on the port connected to the Jetson, or `tegrarcm_v2` can hang mid-write while the kernel parks the device. Easiest fix is to disable it globally for the rest of the boot:
-
-  ```bash
-  echo -1 | sudo tee /sys/module/usbcore/parameters/autosuspend
-  ```
-
-  For a per-device override (find the path via `lsusb -t` once Jetson is in APX recovery, then map to `/sys/bus/usb/devices/<bus>-<port>/`):
-
-  ```bash
-  echo on | sudo tee /sys/bus/usb/devices/<bus>-<port>/power/control
-  ```
-- **`nfsd` kernel module** (for the `flash` stage only) — `l4t_initrd_flash.sh` boots a minimal initrd on the Jetson and serves the flash payload to it over a local NFS export. The container ships the NFS server but shares the host kernel, so load `nfsd` on the host once per boot:
-
-  ```bash
-  sudo modprobe nfsd
-  ```
-
-  Persist it across reboots with `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`. Without it the flash dies with `RPC: Program not registered` / `Return value 114`. `prepare` does not need this.
+  Symptoms when skipped: no QEMU → `chroot: ... Exec format error` during `prepare`; no `nfsd` → `RPC: Program not registered` / `Return value 114` during `flash`. `prepare` needs only the QEMU step.
 - **Jetson in APX recovery** (for the `flash` stage only; `prepare` needs no Jetson connected).
 
 ## Configure `jetson.yaml`
@@ -434,7 +405,7 @@ Stale USB endpoint state from a previous interrupted flash. A **hardware** power
 3. Reconnect power.
 4. Release Recovery after 2–3 seconds.
 
-Also confirm the USB buffer-size bump from [Prerequisites](#prerequisites) was applied this boot.
+Also confirm `./script/host_setup.sh` ran this boot — it raises the USB buffer and disables autosuspend (see [Prerequisites](#prerequisites)).
 
 ### `Error: Error opening /dev/sda: No medium found` (microSD via USB reader)
 
