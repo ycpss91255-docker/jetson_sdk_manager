@@ -42,6 +42,7 @@ jetpack_to_l4t:
     rootfs_url: http://example.invalid/rootfs.tbz2
 board_alias_to_target:
   agx-orin: jetson-agx-orin-devkit
+  orin-nano: jetson-orin-nano-devkit-super
 storage_alias_to_device:
   emmc: internal
   nvme: nvme0n1p1
@@ -141,7 +142,10 @@ EOF
   assert_output --partial '--external-device'
   assert_output --partial 'nvme0n1p1'
   assert_output --partial 'flash_l4t_external.xml'
-  assert_output --partial 'external'
+  # Exact-line match: 'external' is the positional mode arg, not a substring
+  # of some flag — guards against a regression that drops the positional.
+  run grep -Fxq external "${ARGV_LOG}"
+  assert_success
 }
 
 @test "prepare honors device_path override on usb alias" {
@@ -194,5 +198,110 @@ EOF
   assert_output --partial '--flash-only'
   assert_output --partial '--external-device'
   assert_output --partial 'nvme0n1p1'
-  assert_output --partial 'external'
+  run grep -Fxq external "${ARGV_LOG}"
+  assert_success
+}
+
+@test "flash aborts when the volume is empty (no marker)" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  rm -f "${L4T_DIR}/.prepared.yaml"
+  run bash -c "'${SCRIPT_DIR}/flash.sh' 2>&1"
+  assert_failure
+  assert_output --partial 'prepare'
+  run cat "${ARGV_LOG}"
+  refute_output --partial '--flash-only'
+}
+
+@test "flash aborts when BSP is prepared but images were not generated" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  # The default marker has phases up to 'user' but no 'images' — exactly
+  # the state left by `clean.sh build`. flash must refuse, not write.
+  run bash -c "'${SCRIPT_DIR}/flash.sh' 2>&1"
+  assert_failure
+  assert_output --partial 'no flash images'
+  run cat "${ARGV_LOG}"
+  refute_output --partial '--flash-only'
+}
+
+@test "flash aborts when no Jetson is in recovery" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  yq -i '.phases |= (. + ["images"] | unique)' "${L4T_DIR}/.prepared.yaml"
+  # Override the always-on-recovery lsusb stub with one that reports an
+  # empty bus for every recovery PID query.
+  cat >"${STUB_BIN}/lsusb" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "${STUB_BIN}/lsusb"
+  run bash -c "'${SCRIPT_DIR}/flash.sh' 2>&1"
+  assert_failure
+  assert_output --partial 'recovery'
+  run cat "${ARGV_LOG}"
+  refute_output --partial '--flash-only'
+}
+
+@test "prepare dispatches the orin-nano target (non-agx board)" {
+  local nano_dir="${L4T_ROOT}/JetPack_6.2.2_Linux_jetson-orin-nano-devkit-super/Linux_for_Tegra"
+  mkdir -p "${nano_dir}/tools/kernel_flash"
+  cat >"${nano_dir}/tools/kernel_flash/l4t_initrd_flash.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$@" >>"${ARGV_LOG}"
+EOF
+  chmod +x "${nano_dir}/tools/kernel_flash/l4t_initrd_flash.sh"
+  cat >"${nano_dir}/.prepared.yaml" <<'EOF'
+jetpack_version: "6.2.2"
+hw_targets: "jetson-orin-nano-devkit-super"
+phases: [bsp, rootfs, binaries, user]
+EOF
+  cat >"${JETSON_YAML}" <<'EOF'
+jetpack:
+  version: "6.2.2"
+hardware:
+  board: orin-nano
+storage:
+  device: nvme
+user:
+  username: jetson
+  password: jetson
+  hostname: jetson-nano
+EOF
+  run "${SCRIPT_DIR}/prepare.sh"
+  assert_success
+  run cat "${ARGV_LOG}"
+  assert_output --partial 'jetson-orin-nano-devkit-super'
+  assert_output --partial 'nvme0n1p1'
+}
+
+@test "prepare writes a static NetworkManager profile when network.method=static" {
+  cat >"${JETSON_YAML}" <<'EOF'
+jetpack:
+  version: "6.2.2"
+hardware:
+  board: agx-orin
+storage:
+  device: emmc
+user:
+  username: jetson
+  password: jetson
+  hostname: jetson-agx
+network:
+  method: static
+  static:
+    address: 192.168.1.50/24
+    gateway: 192.168.1.1
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+EOF
+  run "${SCRIPT_DIR}/prepare.sh"
+  assert_success
+  local profile="${L4T_DIR}/rootfs/etc/NetworkManager/system-connections/jetson-static.nmconnection"
+  assert_file_exists "${profile}"
+  run cat "${profile}"
+  assert_output --partial 'addresses=192.168.1.50/24'
+  assert_output --partial 'gateway=192.168.1.1'
+  assert_output --partial 'dns=8.8.8.8;1.1.1.1;'
 }

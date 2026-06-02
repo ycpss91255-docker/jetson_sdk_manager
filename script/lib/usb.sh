@@ -19,8 +19,10 @@ JETSON_RECOVERY_PIDS=('7023' '7223' '7423' '7523' '7e19')
 
 # jetson_pid_is_recovery <pid>
 # Echoes nothing; returns 0 when the PID is in the recovery list.
+# Case-folds the input so an uppercase hex PID (e.g. 7E19 from some
+# lsusb builds) still matches the lowercase JETSON_RECOVERY_PIDS list.
 jetson_pid_is_recovery() {
-  local pid="$1" candidate
+  local pid="${1,,}" candidate
   for candidate in "${JETSON_RECOVERY_PIDS[@]}"; do
     [[ "${candidate}" == "${pid}" ]] && return 0
   done

@@ -84,18 +84,67 @@ _volume_exec() {
   docker run --rm -v "${mount_spec}" alpine:3 sh -c "${cmd}"
 }
 
+# _reset_phases <space-separated phase names>
+#
+# Drop the named phases from every .prepared.yaml marker in the volume.
+# clean.sh only rm's directories; the ledger lives INSIDE the volume and
+# is not touched by the surgical finds. Without this, prepare.sh's resume
+# logic (volume_phase_done) and flash.sh's images gate would still treat a
+# just-deleted phase as done — so a re-prepare silently regenerates nothing
+# and flash then runs against missing images. alpine:3 has no yq, so use
+# the yq image's bundled busybox shell to edit each marker in place.
+_reset_phases() {
+  local phases="$1" mount_spec
+  if ! mount_spec=$(_resolve_mount_spec); then
+    return 0
+  fi
+  docker run --rm --entrypoint /bin/sh -v "${mount_spec}" mikefarah/yq:4 -c '
+    drop="'"${phases}"'"
+    find /vol -type f -name .prepared.yaml | while IFS= read -r m; do
+      for p in ${drop}; do
+        yq -i "del(.phases[] | select(. == \"${p}\"))" "${m}"
+      done
+      echo "[clean] reset phases (${drop}) in ${m}" >&2
+    done
+  '
+}
+
+# Echo "removed N path(s)" / "nothing matched" instead of an unconditional
+# "Done", and drop the blanket 2>/dev/null so real errors (permission,
+# mount) abort under set -e rather than masquerading as a clean run.
 _clean_build() {
   _docker_required
   printf '[clean] Removing tools/kernel_flash/images/\n' >&2
-  _volume_exec 'find /vol -type d -name images -path "*/tools/kernel_flash/*" -exec rm -rf {} + 2>/dev/null || true'
-  printf '[clean] Done\n' >&2
+  _volume_exec '
+    matches=$(find /vol -type d -name images -path "*/tools/kernel_flash/*")
+    if [ -z "${matches}" ]; then
+      echo "[clean] nothing matched — already clean?" >&2
+    else
+      printf "%s\n" "${matches}" | xargs rm -rf
+      echo "[clean] removed $(printf "%s\n" "${matches}" | wc -l) image dir(s)" >&2
+    fi
+  '
+  # Images are gone — clear the phase so re-prepare regenerates them and
+  # flash.sh no longer passes its "images" gate against a missing dir.
+  _reset_phases "images"
 }
 
 _clean_rootfs() {
   _docker_required
   printf '[clean] Removing rootfs/ subtrees\n' >&2
-  _volume_exec 'find /vol -type d -name rootfs -path "*/Linux_for_Tegra/*" -exec rm -rf {} + 2>/dev/null || true'
-  printf '[clean] Done\n' >&2
+  _volume_exec '
+    matches=$(find /vol -type d -name rootfs -path "*/Linux_for_Tegra/*")
+    if [ -z "${matches}" ]; then
+      echo "[clean] nothing matched — already clean?" >&2
+    else
+      printf "%s\n" "${matches}" | xargs rm -rf
+      echo "[clean] removed $(printf "%s\n" "${matches}" | wc -l) rootfs subtree(s)" >&2
+    fi
+  '
+  # Removing rootfs/ invalidates everything layered on top of it: the
+  # applied binaries, the created user, the static-network profile, and
+  # the generated images all live under (or were derived from) rootfs.
+  _reset_phases "rootfs binaries user network images"
 }
 
 _clean_l4t() {

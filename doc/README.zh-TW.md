@@ -137,7 +137,8 @@ make run -- -t prepare
 
 # 階段 2 — 寫入 Jetson
 # Jetson 進入 APX recovery：斷電、按住 REC、接電、放開。
-make build -- -t probe flash
+make build -- -t probe   # 一次只能 build 一個 stage（最後的 -t 生效），分開 build
+make build -- -t flash
 make run -- -t probe     # 確認 Jetson 在 APX (exit 0 = ready to flash)
 make run -- -t flash
 ```
@@ -221,6 +222,7 @@ graph TD
     devel --> prepare["prepare\nCMD prepare.sh\n(host-side image build)"]
     EXT3 --> prepare
     devel --> flash["flash\nCMD flash.sh\n(USB write to Jetson)"]
+    devel --> probe["probe\nCMD probe.sh\n(lsusb 0955 sanity check)"]
     devel --> inspector["inspector\n+ SDK Manager + X11 libs\nCMD inspector-entrypoint.sh"]
     EXT4 --> inspector
 
@@ -246,7 +248,7 @@ jetson_sdk_manager/
 ├── jetson.yaml -> config/jetson/agx-orin-emmc.yaml   # symlink；切換 preset
 ├── compose.yaml                 # Docker Compose（衍生，gitignored）
 ├── Dockerfile                   # sys → devel-base → devel → {prepare, flash, inspector}
-├── Makefile -> .base/script/docker/wrapper/Makefile
+├── Makefile -> .base/script/docker/Makefile
 ├── .base/                       # 共用模板（git subtree）
 ├── data/                        # 持久化狀態（gitignored）
 │   ├── jetson_l4t/              #   BSP + rootfs + 燒錄 image
@@ -356,14 +358,13 @@ make run -- -t probe
 在 host 驗證：
 
 ```bash
-lsusb | grep 0955
+lsusb | grep -i 'NVIDIA Corp'
 ```
 
 | 輸出 | 狀態 |
 |---|---|
-| `0955:7023 NVIDIA Corp. APX` | AGX Orin 進入 recovery |
-| `0955:7223 NVIDIA Corp. APX` | Orin NX / Nano 進入 recovery |
-| `0955:xxxx`（其他 PID） | 正常開機 — 重新進入 recovery |
+| `0955:7023` / `7223` / `7423` / `7523` / `7e19` NVIDIA Corp. APX | Jetson 進入 recovery（可以開始 flash） |
+| `0955:<其他 PID>` | 已開機進 OS — 重新進入 recovery |
 | （無輸出） | 未偵測到 — 換線 / 換 port / 直連（不要用 hub） |
 
 Recovery mode 走 USB 2.0（480 Mbps），這是正常的 — APX 模式下 USB 3 controller 不啟用。

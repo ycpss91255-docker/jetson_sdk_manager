@@ -29,12 +29,15 @@ Containerized NVIDIA Jetson Linux (L4T) factory-flash workflow for Jetson Orin d
 ## TL;DR
 
 ```bash
+./script/init_data_dirs.sh                            # first time only: pre-create data/ mounts as you, not root
 ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # pick a preset
 
 make run -- -t prepare    # Phase 1: download BSP + build flash images (~30 min)
 # Put Jetson in APX recovery (hold REC + tap RESET)
 make run -- -t flash      # Phase 2: write images to Jetson (~10 min)
 ```
+
+> First-time `init_data_dirs.sh` and the explicit `make build` steps are detailed in [Quick Start](#quick-start). `make run` auto-builds a missing stage image on first invocation.
 
 After first boot, install JetPack components on the Jetson itself:
 
@@ -137,7 +140,8 @@ make run -- -t prepare
 
 # Phase 2 — write to Jetson
 # Put Jetson into APX recovery: power off, hold REC, reconnect power, release.
-make build -- -t probe flash
+make build -- -t probe   # one stage per build — last -t wins, so build them separately
+make build -- -t flash
 make run -- -t probe     # confirm Jetson visible in APX (exits 0 on success)
 make run -- -t flash
 ```
@@ -189,7 +193,7 @@ make build -- -t inspector
 make run -- -t inspector
 ```
 
-The entrypoint prints a banner explaining why the Install button is broken inside Docker, then (in interactive mode) waits for Enter before launching the GUI. Pass `--no-banner` style flags through to `sdkmanager-gui` via the `make run` positional args if needed.
+The entrypoint prints a banner explaining why the Install button is broken inside Docker, then (in interactive mode) waits for Enter before launching the GUI. Any extra positional args after `-t inspector` are forwarded verbatim to `sdkmanager-gui` (after `--no-sandbox`). The warning banner and the Enter prompt are always shown and cannot be disabled.
 
 GUI mode requires an X11 session on the host; the base template auto-detects `$DISPLAY` and forwards the X11 socket + `XAUTHORITY`.
 
@@ -247,7 +251,7 @@ jetson_sdk_manager/
 ├── jetson.yaml -> config/jetson/agx-orin-emmc.yaml   # symlink; switch presets here
 ├── compose.yaml                 # Docker Compose (derived, gitignored)
 ├── Dockerfile                   # sys → devel-base → devel → {prepare, flash, inspector}
-├── Makefile -> .base/script/docker/wrapper/Makefile
+├── Makefile -> .base/script/docker/Makefile
 ├── .base/                       # Shared template (git subtree)
 ├── data/                        # Persistent state (gitignored)
 │   ├── jetson_l4t/              #   BSP + rootfs + flash images
@@ -357,14 +361,13 @@ Recovery mode entry, step-by-step:
 Verify on the host:
 
 ```bash
-lsusb | grep 0955
+lsusb | grep -i 'NVIDIA Corp'
 ```
 
 | Output | Status |
 |---|---|
-| `0955:7023 NVIDIA Corp. APX` | AGX Orin in recovery |
-| `0955:7223 NVIDIA Corp. APX` | Orin NX / Nano in recovery |
-| `0955:xxxx` (other PID) | Normal boot — re-enter recovery |
+| `0955:7023` / `7223` / `7423` / `7523` / `7e19` NVIDIA Corp. APX | Jetson in recovery (ready to flash) |
+| `0955:<other PID>` | Booted into OS — re-enter recovery |
 | (nothing) | Not detected — try a different cable / port / direct connection (no hub) |
 
 Recovery mode runs over USB 2.0 (480 Mbps); this is normal — the USB 3 controller is inactive in APX.

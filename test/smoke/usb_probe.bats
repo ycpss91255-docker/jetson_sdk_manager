@@ -51,6 +51,35 @@ setup() {
   ! jetson_pid_is_recovery ""
 }
 
+@test "recovery PID match is case-insensitive (uppercase hex from some lsusb builds)" {
+  jetson_pid_is_recovery 7E19
+  jetson_pid_is_recovery 7023
+}
+
+_stub_lsusb() {
+  STUB_BIN="${BATS_TEST_TMPDIR}/stub-bin"
+  mkdir -p "${STUB_BIN}"
+  printf '%s\n' '#!/usr/bin/env bash' "$1" >"${STUB_BIN}/lsusb"
+  chmod +x "${STUB_BIN}/lsusb"
+  export PATH="${STUB_BIN}:${PATH}"
+}
+
+@test "probe.sh exits 0 and reports recovery when an APX device is on the bus" {
+  [[ -n "${PROBE_SH:-}" ]] || skip "probe.sh not present in this image"
+  _stub_lsusb "printf 'Bus 001 Device 002: ID 0955:7023 NVIDIA Corp. APX\n'"
+  run bash -c "'${PROBE_SH}' 2>&1"
+  assert_success
+  assert_output --partial 'recovery range'
+}
+
+@test "probe.sh exits non-zero when only a non-recovery NVIDIA device is present" {
+  [[ -n "${PROBE_SH:-}" ]] || skip "probe.sh not present in this image"
+  _stub_lsusb "printf 'Bus 001 Device 002: ID 0955:6000 NVIDIA Corp. Tegra\n'"
+  run bash -c "'${PROBE_SH}' 2>&1"
+  assert_failure
+  assert_output --partial 'NOT in the recovery range'
+}
+
 @test "probe.sh exits non-zero when no Jetson is connected (devel-test host)" {
   [[ -n "${PROBE_SH:-}" ]] || skip "probe.sh not present in this image"
   command -v lsusb >/dev/null 2>&1 || skip "lsusb not on PATH"

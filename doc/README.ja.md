@@ -38,6 +38,7 @@ NVIDIA SDK Manager の GUI / `--cli` フローは host 上の NFS server + `ipta
 - **Host ファイルシステムは ext4 / xfs / btrfs**。NTFS / exFAT / `fuseblk` / FAT は setuid と ownership を保持できず、フラッシュ後の Jetson の `sudo` が起動を拒否します。`prepare.sh` は非 unix FS を検出するとアクションメッセージ付きで中止します。
 - **QEMU binfmt**：`docker run --rm --privileged multiarch/qemu-user-static --reset -p yes`（boot ごとに 1 回）。
 - **USB buffer**：`echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb`（boot ごとに 1 回）。
+- **USB オートサスペンド**：Jetson を接続するポートでは無効化が必須。さもないと `tegrarcm_v2` が書き込み途中でハングします。`echo -1 | sudo tee /sys/module/usbcore/parameters/autosuspend`（boot ごとに 1 回）。
 
 ## `jetson.yaml` の設定
 

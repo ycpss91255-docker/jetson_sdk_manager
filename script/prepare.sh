@@ -85,9 +85,16 @@ main() {
   autologin=$(yaml_get_optional "${JETSON_YAML}" '.user.autologin' 'false')
 
   _step "2/10 Resolving JetPack ${jp} → L4T metadata"
-  eval "$(resolve_l4t_release "${jp}")"
+  # Assign-then-eval: `eval "$(resolver)"` swallows the resolver's non-zero
+  # exit (eval of empty output succeeds), so a validation failure would
+  # slip through and only crash later via set -u with noisy output. Capture
+  # first so a failed resolve aborts here with its own action message.
+  local _release_env _storage_env
+  _release_env=$(resolve_l4t_release "${jp}") || exit 1
+  eval "${_release_env}"
   hw_target=$(resolve_board_target "${board}")
-  eval "$(resolve_storage_device "${storage_alias}" "${storage_device_path}")"
+  _storage_env=$(resolve_storage_device "${storage_alias}" "${storage_device_path}") || exit 1
+  eval "${_storage_env}"
   printf '  L4T release: %s\n  Target:      %s\n  Storage:     %s (mode=%s%s)\n' \
     "${L4T_RELEASE}" "${hw_target}" "${storage_alias}" "${STORAGE_MODE}" \
     "${STORAGE_DEVICE:+, device=${STORAGE_DEVICE}}" >&2
@@ -97,6 +104,10 @@ main() {
   local l4t_dir
   l4t_dir=$(l4t_root_path "${jp}" "${hw_target}")
   mkdir -p "${l4t_dir}"
+  # Stamp an empty marker before the first extraction so a crash mid-phase
+  # leaves a matching ledger behind — the next run resumes instead of
+  # treating the half-extracted tree as a forced-clean mismatch.
+  volume_init_marker "${jp}" "${hw_target}"
 
   _step "4/10 Downloading BSP + rootfs tarballs (skip if cached)"
   local bsp_tar rootfs_tar
@@ -149,7 +160,11 @@ main() {
   _step "9/10 Configuring network"
   local netmethod
   netmethod=$(yaml_get_optional "${JETSON_YAML}" '.network.method' '')
-  if [[ "${netmethod}" == "static" ]]; then
+  if [[ "${netmethod}" != "static" ]]; then
+    printf '  DHCP (default) — no profile written\n' >&2
+  elif volume_phase_done "${jp}" "${hw_target}" "network"; then
+    printf '  Static profile already installed — skipping\n' >&2
+  else
     local addr gateway dns_list
     addr=$(yaml_get "${JETSON_YAML}" '.network.static.address')
     gateway=$(yaml_get "${JETSON_YAML}" '.network.static.gateway')
@@ -168,9 +183,8 @@ main() {
       'method=manual' \
       | sudo tee "${l4t_dir}/rootfs/etc/NetworkManager/system-connections/jetson-static.nmconnection" >/dev/null
     sudo chmod 600 "${l4t_dir}/rootfs/etc/NetworkManager/system-connections/jetson-static.nmconnection"
+    volume_record_phase "${jp}" "${hw_target}" "network"
     printf '  Static profile installed: %s via %s\n' "${addr}" "${gateway}" >&2
-  else
-    printf '  DHCP (default) — no profile written\n' >&2
   fi
 
   _step "10/10 Generating flash images (l4t_initrd_flash --no-flash)"
@@ -201,8 +215,8 @@ main() {
 [prepare] Phase 1 complete. Volume jetson_l4t is ready.
 
 Next step:
-  1. Put Jetson into APX recovery (hold Force-Recovery + tap Reset).
-  2. Confirm: \`lsusb | grep -i 'NVIDIA Corp'\` shows the recovery device.
+  1. Put Jetson into APX recovery: power off, hold Force-Recovery, reconnect power, release Force-Recovery.
+  2. Confirm the link: make run -- -t probe   (exits 0 when a Jetson is in APX)
   3. Run: make run -- -t flash
 
 EOF
