@@ -412,7 +412,7 @@ sdb  117.8G Generic-  Micro SD/M2    usb     # 卡實際在這
 2. 跑 `lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN`；`SIZE` 對應你的卡 / SSD 那一個就是目標 device。
 3. 在 `jetson.yaml` 設 `storage.device_path: <name>1`（例如 `sdb1`）— partition `1` 是 `l4t_initrd_flash.sh` 預期的。
 
-若第一次嘗試仍同樣失敗，Jetson initrd 在 bus 上 enumerate 的順序與 host 不同；換下一個字母（`sdb1` → `sdc1`）。完整 override 語義見 [Configure `jetson.yaml`](#configure-jetsonyaml)。
+若第一次嘗試仍同樣失敗，Jetson initrd 在 bus 上 enumerate 的順序與 host 不同；換下一個字母（`sdb1` → `sdc1`）。完整 override 語義見 [設定 `jetson.yaml`](#設定-jetsonyaml)。
 
 其他變通方案（依推薦度排序）：
 
