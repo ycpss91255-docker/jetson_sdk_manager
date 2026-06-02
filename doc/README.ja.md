@@ -41,10 +41,7 @@ NVIDIA SDK Manager の GUI / `--cli` フローは host 上の NFS server + `ipta
 
 - **Host OS**：x86_64 Linux、Docker Engine >= v20.10.6。
 - **Host ファイルシステムは ext4 / xfs / btrfs**。NTFS / exFAT / `fuseblk` / FAT は setuid と ownership を保持できず、フラッシュ後の Jetson の `sudo` が起動を拒否します。`prepare.sh` は非 unix FS を検出するとアクションメッセージ付きで中止します。
-- **QEMU binfmt**：`docker run --rm --privileged multiarch/qemu-user-static --reset -p yes`（boot ごとに 1 回）。
-- **USB buffer**：`echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb`（boot ごとに 1 回）。
-- **USB オートサスペンド**：Jetson を接続するポートでは無効化が必須。さもないと `tegrarcm_v2` が書き込み途中でハングします。`echo -1 | sudo tee /sys/module/usbcore/parameters/autosuspend`（boot ごとに 1 回）。
-- **`nfsd` カーネルモジュール**（`flash` 段階のみ）：`l4t_initrd_flash.sh` はローカル NFS エクスポートで Jetson の initrd にフラッシュペイロードを渡します。コンテナは host とカーネルを共有するため、host 側で読み込みます：`sudo modprobe nfsd`（boot ごとに 1 回）。未ロードだと `RPC: Program not registered` / `Error 114` で失敗します。
+- **boot ごとの host セットアップ — `./script/host_setup.sh`**：Jetson を接続する前に host 上で 1 回実行。QEMU binfmt（prepare の ARM64 ツール)、`nfsd`（flash のローカル NFS エクスポート)、USB オートサスペンド無効化、usbfs buffer を 2048 MB に引き上げ（後の 2 つはフラッシュ中のハング防止)をまとめて実施。再起動でリセットされるため毎回実行。スキップ時の症状:QEMU なし → `Exec format error`;nfsd なし → `RPC: Program not registered` / `Error 114`。nfsd の永続化:`echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`。
 
 ## `jetson.yaml` の設定
 
