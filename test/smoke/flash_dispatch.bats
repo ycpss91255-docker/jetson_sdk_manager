@@ -264,6 +264,52 @@ EOF
   refute_output --partial '--flash-only'
 }
 
+@test "flash aborts when storage mode differs from what was prepared" {
+  _write_jetson_yaml "storage:
+  device: nvme"
+  # Marker says the volume was prepared for internal mode, images present.
+  cat >"${L4T_DIR}/.prepared.yaml" <<'EOF'
+jetpack_version: "6.2.2"
+hw_targets: "jetson-agx-orin-devkit"
+storage_mode: "internal"
+phases: [bsp, rootfs, binaries, user, images]
+EOF
+  run bash -c "'${SCRIPT_DIR}/flash.sh' 2>&1"
+  assert_failure
+  assert_output --partial 'storage mode'
+  run cat "${ARGV_LOG}"
+  refute_output --partial '--flash-only'
+}
+
+@test "prepare records the resolved storage mode in the marker" {
+  _write_jetson_yaml "storage:
+  device: nvme"
+  run "${SCRIPT_DIR}/prepare.sh"
+  assert_success
+  run yq -r '.storage_mode' "${L4T_DIR}/.prepared.yaml"
+  assert_output 'external'
+}
+
+@test "prepare regenerates images when the storage mode changed" {
+  # Prepared for internal with images already done; jetson.yaml now external.
+  cat >"${L4T_DIR}/.prepared.yaml" <<'EOF'
+jetpack_version: "6.2.2"
+hw_targets: "jetson-agx-orin-devkit"
+storage_mode: "internal"
+phases: [bsp, rootfs, binaries, user, images]
+EOF
+  _write_jetson_yaml "storage:
+  device: nvme"
+  run "${SCRIPT_DIR}/prepare.sh"
+  assert_success
+  # images phase was dropped and regenerated under the external dispatch...
+  run cat "${ARGV_LOG}"
+  assert_output --partial '--external-only'
+  # ...and the marker now records the new mode.
+  run yq -r '.storage_mode' "${L4T_DIR}/.prepared.yaml"
+  assert_output 'external'
+}
+
 @test "prepare dispatches the orin-nano target (non-agx board)" {
   local nano_dir="${L4T_ROOT}/JetPack_6.2.2_Linux_jetson-orin-nano-devkit-super/Linux_for_Tegra"
   mkdir -p "${nano_dir}/tools/kernel_flash"

@@ -133,3 +133,44 @@ volume_phase_done() {
   [[ -f "${marker}" ]] || return 1
   yq -e ".phases | contains([\"${phase}\"])" "${marker}" >/dev/null 2>&1
 }
+
+# volume_drop_phase <jetpack_version> <hw_targets> <phase>
+# Remove a phase from the marker so the next prepare re-runs that step.
+# No-op when the marker or the phase is absent.
+volume_drop_phase() {
+  local jp="$1" hw="$2" phase="$3"
+  local marker
+  marker="$(volume_marker_path "${jp}" "${hw}")"
+  [[ -f "${marker}" ]] || return 0
+  yq -i "del(.phases[] | select(. == \"${phase}\"))" "${marker}"
+}
+
+# volume_record_storage_mode <jetpack_version> <hw_targets> <mode>
+# Persist the storage MODE (internal|external) the images were built for.
+# The marker tracks jetpack+board for the mismatch guard, but storage mode
+# determines which flash images l4t_initrd_flash --no-flash produced, so
+# flash.sh compares it to refuse a wrong-mode flash. clean.sh build/rootfs
+# keep this field (same mode, just regenerate); only clean.sh l4t drops it
+# with the whole marker.
+volume_record_storage_mode() {
+  local jp="$1" hw="$2" mode="$3"
+  local marker
+  marker="$(volume_marker_path "${jp}" "${hw}")"
+  volume_init_marker "${jp}" "${hw}"
+  yq -i ".storage_mode = \"${mode}\"" "${marker}"
+}
+
+# volume_storage_mode <jetpack_version> <hw_targets>
+# Echoes the recorded storage mode, or empty when unrecorded (legacy marker
+# written before storage_mode existed). Callers treat empty as "unknown —
+# do not block" so pre-existing prepared volumes keep working.
+volume_storage_mode() {
+  local jp="$1" hw="$2"
+  local marker
+  marker="$(volume_marker_path "${jp}" "${hw}")"
+  [[ -f "${marker}" ]] || return 0
+  local m
+  m=$(yq -r '.storage_mode // ""' "${marker}" 2>/dev/null || true)
+  [[ "${m}" == "null" ]] && m=""
+  printf '%s' "${m}"
+}

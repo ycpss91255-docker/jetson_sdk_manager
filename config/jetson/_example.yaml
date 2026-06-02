@@ -25,13 +25,13 @@
 #
 #   (`probe` reads nothing - it is config-free.)
 #
-#   * internal (emmc) vs external (nvme/usb) build DIFFERENT images. The
-#     volume mismatch guard only checks jetpack+board, NOT storage, so it
-#     will NOT stop you from flashing internally-built images with an
-#     external dispatch (or vice-versa). If you switch storage MODE, run
-#     `./script/clean.sh build` then re-`prepare`. Switching device_path
-#     (or between external aliases) only changes where `flash` writes and
-#     is safe without re-preparing.
+#   * internal (emmc) vs external (nvme/usb) build DIFFERENT images. prepare
+#     records the storage mode in the marker; flash refuses to write when
+#     jetson.yaml resolves to a different mode than was prepared. To switch
+#     mode just re-run `prepare` — it detects the change and regenerates the
+#     images for the new mode. Switching device_path (or between external
+#     aliases) keeps the same mode and is safe at flash time without
+#     re-preparing.
 
 # ─── jetpack (REQUIRED) ──────────────────── [prepare + flash; inspector hint] ─
 # JetPack release tag. Internal `_l4t_mapping.yaml` resolves this to an
