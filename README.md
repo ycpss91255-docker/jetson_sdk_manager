@@ -141,10 +141,11 @@ See `config/jetson/_example.yaml` for the full schema with comments.
 
 ## Quick Start
 
-> **First time only:** run `./script/init_data_dirs.sh` before `make run`. Skipping it lets the Docker daemon `mkdir` the `data/` mount points as root, blocking the container's non-root user.
+> **Before `make run`:** run `./script/host_setup.sh` once per boot (QEMU binfmt, `nfsd`, USB tweaks — see [Prerequisites](#prerequisites)), and `./script/init_data_dirs.sh` on the first run (otherwise the Docker daemon `mkdir`s the `data/` mounts as root, blocking the container's non-root user).
 
 ```bash
-./script/init_data_dirs.sh
+./script/host_setup.sh      # once per boot: QEMU binfmt + nfsd + USB tweaks (run on host)
+./script/init_data_dirs.sh  # first run only
 ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml
 
 # Phase 1 — host-side image build (no Jetson connected)

@@ -141,10 +141,11 @@ storage:
 
 ## 快速開始
 
-> **首次使用：** 在 `make run` 之前先執行 `./script/init_data_dirs.sh`。略過此步驟會讓 Docker daemon 以 root 建立 `data/` 掛載目錄，容器內的非 root 使用者將無法存取。
+> **`make run` 之前：** 每次開機先跑一次 `./script/host_setup.sh`(QEMU binfmt、`nfsd`、USB 調整 —— 見 [前置需求](#前置需求)),首次再跑 `./script/init_data_dirs.sh`(否則 Docker daemon 會以 root 建立 `data/` 掛載目錄,容器內的非 root 使用者將無法存取)。
 
 ```bash
-./script/init_data_dirs.sh
+./script/host_setup.sh      # 每次開機一次:QEMU binfmt + nfsd + USB 調整(在 host 上跑)
+./script/init_data_dirs.sh  # 首次才需要
 ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml
 
 # 階段 1 — host 端產生 image（不需連 Jetson）
