@@ -59,43 +59,14 @@ SDK Manager 仍保留於 **`inspector`** stage，用途是瀏覽 JetPack 的元�
 
 ## 前置需求
 
-> **捷徑:** `./script/host_setup.sh` 一條指令套用下面所有「每次開機」的 host 設定(QEMU binfmt、`nfsd`、USB autosuspend/buffer)。在連接 Jetson 前於 host 上執行。下面各條說明每項的用途與如何持久化。
-
 - **Host OS**：x86_64 Linux。
 - **Docker Engine** >= v20.10.6。
 - **Repo 所在的 host 檔案系統須為 ext4 / xfs / btrfs。** `apply_binaries.sh` 會在 rootfs 樹中產生 setuid binary（`sudo`）和 root 擁有的檔案。NTFS / exFAT / `fuseblk` / FAT 會在解壓時靜默丟掉 setuid 與 ownership，燒錄完成的 Jetson 開機後 `sudo` 拒絕啟動。`prepare.sh` 偵測到非 unix FS 會以 action 訊息中止；請將 repo 移到 ext4 / xfs / btrfs 分割區，或 bind-mount 一個 ext4 目錄覆蓋 `./data/jetson_l4t/`。
-- **QEMU binfmt** — prepare 階段執行 BSP 中的 ARM64 工具需要：
+- **每次開機的 host 設定 — `./script/host_setup.sh`。** 在連接 Jetson 前於 host 上執行。一條指令會註冊 **QEMU binfmt**(`prepare` 跑 BSP 的 ARM64 工具)、載入 **`nfsd`** 模組(`flash` 透過本地 NFS export 把 payload 餵給 Jetson 的 initrd —— 無 `iptables` / `usb-gadget` forwarding)、關閉 **USB autosuspend**、把 **`usbfs` buffer** 拉到 2048 MB(後兩者避免 `tegrarcm_v2` / NFS bulk write 燒到一半卡住)。這些重開機後都會重置,所以每次開機要再跑一次。兩件它**不會**幫你做的:
+  - **持久化 `nfsd`**(下次開機免再載):`echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`。
+  - **per-device autosuspend 覆寫**,若某個 port 仍把裝置 park(Jetson 進 APX 後用 `lsusb -t` 找路徑):`echo on | sudo tee /sys/bus/usb/devices/<bus>-<port>/power/control`。
 
-  ```bash
-  docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-  ```
-
-  每次開機後執行一次。透過 Docker 註冊 ARM64 翻譯至 kernel，不需安裝 host 套件。
-
-- **USB host buffer** — `tegrarcm_v2` bulk write 偶爾會卡在預設的 16 MB。每次開機調整一次：
-
-  ```bash
-  echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
-  ```
-
-- **USB auto-suspend** — 連接 Jetson 的 port 必須關閉 auto-suspend，否則 `tegrarcm_v2` 可能在寫入過程中因 kernel 把裝置 park 而卡住。最簡便是本次開機全域關掉：
-
-  ```bash
-  echo -1 | sudo tee /sys/module/usbcore/parameters/autosuspend
-  ```
-
-  若只想針對單一裝置（Jetson 進 APX recovery 後用 `lsusb -t` 找路徑，對應到 `/sys/bus/usb/devices/<bus>-<port>/`）：
-
-  ```bash
-  echo on | sudo tee /sys/bus/usb/devices/<bus>-<port>/power/control
-  ```
-- **`nfsd` kernel 模組**（僅 `flash` 階段需要）— `l4t_initrd_flash.sh` 會在 Jetson 上開機一個精簡 initrd,並透過本地 NFS export 把燒錄 payload 餵給它。容器內含 NFS server,但與 host 共用 kernel,所以要在 host 上每次開機載入一次 `nfsd`:
-
-  ```bash
-  sudo modprobe nfsd
-  ```
-
-  用 `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf` 讓它重開機後仍生效。沒載入的話 flash 會以 `RPC: Program not registered` / `Return value 114` 失敗。`prepare` 不需要這個。
+  漏跑的症狀:沒 QEMU → `prepare` 出現 `chroot: ... Exec format error`;沒 `nfsd` → `flash` 出現 `RPC: Program not registered` / `Return value 114`。`prepare` 只需要 QEMU 那一步。
 - **Jetson 進入 APX recovery**（僅 `flash` 階段需要；`prepare` 不需連 Jetson）。
 
 ## 設定 `jetson.yaml`
