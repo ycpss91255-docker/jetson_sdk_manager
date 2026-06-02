@@ -13,6 +13,11 @@
 ## TL;DR
 
 ```bash
+# 一次性 host 设定（每次重开机后要再跑一次）
+docker run --rm --privileged multiarch/qemu-user-static --reset -p yes   # ARM64 模拟（prepare）
+sudo modprobe nfsd                                                       # 本地 NFS export（flash）
+
+./script/init_data_dirs.sh                            # 首次才需要：以你的身分(非 root)预建 data/ 挂载点
 ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # 选一个 preset
 
 make run -- -t prepare    # 阶段 1：下载 BSP + 生成烧录 image（约 30 分钟）
@@ -39,6 +44,7 @@ NVIDIA SDK Manager 的 GUI 与 `--cli` 流程依赖 host 上的 NFS server + `ip
 - **QEMU binfmt**：`docker run --rm --privileged multiarch/qemu-user-static --reset -p yes`（每次开机一次）。
 - **USB buffer**：`echo 2048 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb`（每次开机一次）。
 - **USB auto-suspend**：连接 Jetson 的端口必须关闭，否则 `tegrarcm_v2` 可能在写入中途卡死。最简单是本次开机全局关掉：`echo -1 | sudo tee /sys/module/usbcore/parameters/autosuspend`（每次开机一次）。
+- **`nfsd` 内核模块**（仅 `flash` 阶段）：`l4t_initrd_flash.sh` 通过本地 NFS export 把烧录 payload 喂给 Jetson 的 initrd，容器与 host 共用内核，需在 host 上载入：`sudo modprobe nfsd`（每次开机一次）。未载入会以 `RPC: Program not registered` / `Error 114` 失败。
 
 ## 设定 `jetson.yaml`
 

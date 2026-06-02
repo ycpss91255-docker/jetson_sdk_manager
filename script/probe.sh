@@ -76,7 +76,7 @@ EOF
     exit 1
   fi
 
-  printf '\n[probe] At least one Jetson is in APX recovery. Next: \`make run -- -t flash\`.\n' >&2
+  printf '\n[probe] At least one Jetson is in APX recovery. Next: make run -- -t flash\n' >&2
 }
 
 main "$@"

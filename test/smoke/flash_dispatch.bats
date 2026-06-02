@@ -100,6 +100,13 @@ printf 'Bus 001 Device 002: ID 0955:7023 NVIDIA Corp. APX\n'
 EOF
   chmod +x "${STUB_BIN}/lsusb"
   export PATH="${STUB_BIN}:${PATH}"
+
+  # flash.sh's NFS preflight reads /proc/filesystems; point it at a fixture
+  # that advertises nfsd so the dispatch tests reach the flash step. Tests
+  # that exercise the negative branch override this.
+  NFS_PROC_FILESYSTEMS="${BATS_TEST_TMPDIR}/filesystems"
+  printf 'nodev\tnfsd\n' >"${NFS_PROC_FILESYSTEMS}"
+  export NFS_PROC_FILESYSTEMS
 }
 
 _write_jetson_yaml() {
@@ -239,6 +246,20 @@ EOF
   run bash -c "'${SCRIPT_DIR}/flash.sh' 2>&1"
   assert_failure
   assert_output --partial 'recovery'
+  run cat "${ARGV_LOG}"
+  refute_output --partial '--flash-only'
+}
+
+@test "flash aborts with modprobe guidance when host nfsd is not loaded" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  yq -i '.phases |= (. + ["images"] | unique)' "${L4T_DIR}/.prepared.yaml"
+  # Recovery device is present (default stub); the only failing precondition
+  # is the missing nfsd kernel module.
+  printf 'nodev\ttmpfs\next4\n' >"${NFS_PROC_FILESYSTEMS}"   # no nfsd line
+  run bash -c "'${SCRIPT_DIR}/flash.sh' 2>&1"
+  assert_failure
+  assert_output --partial 'modprobe nfsd'
   run cat "${ARGV_LOG}"
   refute_output --partial '--flash-only'
 }

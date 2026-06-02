@@ -80,13 +80,13 @@ _stub_lsusb() {
   assert_output --partial 'NOT in the recovery range'
 }
 
-@test "probe.sh exits non-zero when no Jetson is connected (devel-test host)" {
+@test "probe.sh exits non-zero when no NVIDIA device is on the bus" {
   [[ -n "${PROBE_SH:-}" ]] || skip "probe.sh not present in this image"
-  command -v lsusb >/dev/null 2>&1 || skip "lsusb not on PATH"
-  # CI / devel-test build runs on hosts without a real Jetson attached.
-  # probe should therefore exit non-zero (no recovery device) and print
-  # an action message. Don't assert specific output text — the visible
-  # contract is the exit code.
-  run "${PROBE_SH}"
-  [[ "${status}" -ne 0 ]]
+  # Stub an empty bus so the result is host-independent — a real Jetson
+  # attached to the build host (as during an actual flash) would otherwise
+  # flip this test. probe must exit non-zero and say nothing was detected.
+  _stub_lsusb "exit 0"
+  run bash -c "'${PROBE_SH}' 2>&1"
+  assert_failure
+  assert_output --partial 'No NVIDIA USB device detected'
 }
