@@ -29,10 +29,7 @@
 ## TL;DR
 
 ```bash
-# 一次性 host 設定（每次重開機後要再跑一次）
-docker run --rm --privileged multiarch/qemu-user-static --reset -p yes   # ARM64 模擬（prepare）
-sudo modprobe nfsd                                                       # 本地 NFS export（flash）
-
+./script/host_setup.sh                                # 每次開機一次:qemu + nfsd + USB 調整(在 host 上跑)
 ./script/init_data_dirs.sh                            # 首次才需要：以你的身分(非 root)預建 data/ 掛載點
 ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # 選一個 preset
 
@@ -44,7 +41,7 @@ make run -- -t flash      # 階段 2：寫入 Jetson（約 10 分鐘）
 make run -- -t prepare && make run -- -t flash
 ```
 
-> 這是能完整燒錄成功的最小流程。若燒錄中途卡住，再套用 [前置需求](#前置需求) 裡的 USB 調整。`make run` 首次會自動 build 缺少的 stage image。
+> `./script/host_setup.sh` 把每次開機要做的 host 前置(QEMU binfmt、`nfsd`、USB autosuspend/buffer 調整)一次跑完——各項用途與持久化方式見 [前置需求](#前置需求)。`make run` 首次會自動 build 缺少的 stage image。
 
 Jetson 首次開機後，於裝置上安裝 JetPack 元件：
 
@@ -61,6 +58,8 @@ NVIDIA SDK Manager 的 GUI 與 `--cli` 流程，是透過在 host 上跑 NFS ser
 SDK Manager 仍保留於 **`inspector`** stage，用途是瀏覽 JetPack 的元件目錄、查詢有哪些 `.deb` 套件。其 Install 按鈕在 Docker 內仍然失效；entrypoint 會印 banner 提醒這點。
 
 ## 前置需求
+
+> **捷徑:** `./script/host_setup.sh` 一條指令套用下面所有「每次開機」的 host 設定(QEMU binfmt、`nfsd`、USB autosuspend/buffer)。在連接 Jetson 前於 host 上執行。下面各條說明每項的用途與如何持久化。
 
 - **Host OS**：x86_64 Linux。
 - **Docker Engine** >= v20.10.6。
@@ -303,6 +302,7 @@ jetson_sdk_manager/
 │   ├── clean.sh                 # Volume 清理指令
 │   ├── inspector-entrypoint.sh  # SDK Manager GUI 啟動器 + 警示 banner
 │   ├── lib/                     # yaml / download / volume / errors helpers
+│   ├── host_setup.sh            # 一次性 per-boot host 前置(qemu/nfsd/USB)
 │   ├── init_data_dirs.sh        # 首次以非 root 建立 data/
 │   ├── entrypoint.sh            # 容器 entrypoint（logging tee）
 │   ├── build.sh -> ../.base/script/docker/wrapper/build.sh

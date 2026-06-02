@@ -13,10 +13,7 @@
 ## TL;DR
 
 ```bash
-# 一度きりの host セットアップ（boot ごとに再実行）
-docker run --rm --privileged multiarch/qemu-user-static --reset -p yes   # ARM64 エミュレーション（prepare）
-sudo modprobe nfsd                                                       # ローカル NFS export（flash）
-
+./script/host_setup.sh                                # boot ごとに 1 回:qemu + nfsd + USB 調整(host 上で実行)
 ./script/init_data_dirs.sh                            # 初回のみ：data/ マウント点を非 root の自分で先に作成
 ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # preset を 1 つ選ぶ
 

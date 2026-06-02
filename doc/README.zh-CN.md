@@ -13,10 +13,7 @@
 ## TL;DR
 
 ```bash
-# 一次性 host 设定（每次重开机后要再跑一次）
-docker run --rm --privileged multiarch/qemu-user-static --reset -p yes   # ARM64 模拟（prepare）
-sudo modprobe nfsd                                                       # 本地 NFS export（flash）
-
+./script/host_setup.sh                                # 每次开机一次:qemu + nfsd + USB 调整(在 host 上跑)
 ./script/init_data_dirs.sh                            # 首次才需要：以你的身分(非 root)预建 data/ 挂载点
 ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # 选一个 preset
 

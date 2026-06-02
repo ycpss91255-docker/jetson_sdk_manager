@@ -29,10 +29,7 @@ Containerized NVIDIA Jetson Linux (L4T) factory-flash workflow for Jetson Orin d
 ## TL;DR
 
 ```bash
-# One-time host setup (re-run after each reboot)
-docker run --rm --privileged multiarch/qemu-user-static --reset -p yes   # ARM64 emulation (prepare)
-sudo modprobe nfsd                                                       # local NFS export (flash)
-
+./script/host_setup.sh                                # one-time per boot: qemu + nfsd + USB tweaks (run on host)
 ./script/init_data_dirs.sh                            # first run only: pre-create data/ mounts as you, not root
 ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # pick a preset
 
@@ -44,7 +41,7 @@ make run -- -t flash      # Phase 2: write images to Jetson (~10 min)
 make run -- -t prepare && make run -- -t flash
 ```
 
-> This is the minimum that flashes end-to-end. If a flash stalls mid-write, also apply the USB tweaks in [Prerequisites](#prerequisites). `make run` auto-builds a missing stage image on first invocation.
+> `./script/host_setup.sh` bundles the per-boot host prerequisites (QEMU binfmt, `nfsd`, USB autosuspend/buffer tweaks) — see [Prerequisites](#prerequisites) for what each does and how to persist them. `make run` auto-builds a missing stage image on first invocation.
 
 After first boot, install JetPack components on the Jetson itself:
 
@@ -61,6 +58,8 @@ This repo bypasses that path entirely. The **prepare** stage uses the BSP's own 
 SDK Manager is still shipped — in the **`inspector`** stage — as a catalog browser for looking up which `.deb` packages a given JetPack release contains. Its Install button stays broken inside Docker; the entrypoint prints a banner saying so.
 
 ## Prerequisites
+
+> **Shortcut:** `./script/host_setup.sh` applies the per-boot host setup below (QEMU binfmt, `nfsd`, USB autosuspend/buffer) in one command. Run it on the host before connecting the Jetson. The bullets below explain what each does and how to make them persistent.
 
 - **Host OS**: x86_64 Linux.
 - **Docker Engine** >= v20.10.6.
@@ -303,6 +302,7 @@ jetson_sdk_manager/
 │   ├── clean.sh                 # Volume cleanup targets
 │   ├── inspector-entrypoint.sh  # SDK Manager GUI launcher + warning banner
 │   ├── lib/                     # yaml / download / volume / errors helpers
+│   ├── host_setup.sh            # One-shot per-boot host prereqs (qemu/nfsd/USB)
 │   ├── init_data_dirs.sh        # First-time data/ mkdir as non-root
 │   ├── entrypoint.sh            # Container entrypoint (logging tee)
 │   ├── build.sh -> ../.base/script/docker/wrapper/build.sh
