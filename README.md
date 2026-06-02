@@ -29,7 +29,11 @@ Containerized NVIDIA Jetson Linux (L4T) factory-flash workflow for Jetson Orin d
 ## TL;DR
 
 ```bash
-./script/init_data_dirs.sh                            # first time only: pre-create data/ mounts as you, not root
+# One-time host setup (re-run after each reboot)
+docker run --rm --privileged multiarch/qemu-user-static --reset -p yes   # ARM64 emulation (prepare)
+sudo modprobe nfsd                                                       # local NFS export (flash)
+
+./script/init_data_dirs.sh                            # first run only: pre-create data/ mounts as you, not root
 ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # pick a preset
 
 make run -- -t prepare    # Phase 1: download BSP + build flash images (~30 min)
@@ -37,7 +41,7 @@ make run -- -t prepare    # Phase 1: download BSP + build flash images (~30 min)
 make run -- -t flash      # Phase 2: write images to Jetson (~10 min)
 ```
 
-> First-time `init_data_dirs.sh` and the explicit `make build` steps are detailed in [Quick Start](#quick-start). `make run` auto-builds a missing stage image on first invocation.
+> This is the minimum that flashes end-to-end. If a flash stalls mid-write, also apply the USB tweaks in [Prerequisites](#prerequisites). `make run` auto-builds a missing stage image on first invocation.
 
 After first boot, install JetPack components on the Jetson itself:
 

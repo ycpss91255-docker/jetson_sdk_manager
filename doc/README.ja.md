@@ -13,6 +13,11 @@
 ## TL;DR
 
 ```bash
+# 一度きりの host セットアップ（boot ごとに再実行）
+docker run --rm --privileged multiarch/qemu-user-static --reset -p yes   # ARM64 エミュレーション（prepare）
+sudo modprobe nfsd                                                       # ローカル NFS export（flash）
+
+./script/init_data_dirs.sh                            # 初回のみ：data/ マウント点を非 root の自分で先に作成
 ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # preset を 1 つ選ぶ
 
 make run -- -t prepare    # フェーズ 1：BSP ダウンロード + フラッシュイメージ生成（約 30 分）

@@ -29,12 +29,19 @@
 ## TL;DR
 
 ```bash
+# 一次性 host 設定（每次重開機後要再跑一次）
+docker run --rm --privileged multiarch/qemu-user-static --reset -p yes   # ARM64 模擬（prepare）
+sudo modprobe nfsd                                                       # 本地 NFS export（flash）
+
+./script/init_data_dirs.sh                            # 首次才需要：以你的身分(非 root)預建 data/ 掛載點
 ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # 選一個 preset
 
 make run -- -t prepare    # 階段 1：下載 BSP + 產生燒錄 image（約 30 分鐘）
 # 將 Jetson 進入 APX recovery（按住 REC + 點 RESET）
 make run -- -t flash      # 階段 2：寫入 Jetson（約 10 分鐘）
 ```
+
+> 這是能完整燒錄成功的最小流程。若燒錄中途卡住，再套用 [前置需求](#前置需求) 裡的 USB 調整。`make run` 首次會自動 build 缺少的 stage image。
 
 Jetson 首次開機後，於裝置上安裝 JetPack 元件：
 
