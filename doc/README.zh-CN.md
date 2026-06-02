@@ -23,6 +23,9 @@ ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # 选一个 preset
 make run -- -t prepare    # 阶段 1：下载 BSP + 生成烧录 image（约 30 分钟）
 # 将 Jetson 进入 APX recovery（按住 REC + 点 RESET）
 make run -- -t flash      # 阶段 2：写入 Jetson（约 10 分钟）
+
+# ...或在 Jetson 已进入 APX recovery 的情况下,一条指令跑完两阶段:
+make run -- -t prepare && make run -- -t flash
 ```
 
 Jetson 首次开机后，在设备上安装 JetPack 组件：

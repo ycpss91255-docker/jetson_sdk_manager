@@ -39,6 +39,9 @@ ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # 選一個 preset
 make run -- -t prepare    # 階段 1：下載 BSP + 產生燒錄 image（約 30 分鐘）
 # 將 Jetson 進入 APX recovery（按住 REC + 點 RESET）
 make run -- -t flash      # 階段 2：寫入 Jetson（約 10 分鐘）
+
+# ...或在 Jetson 已進入 APX recovery 的情況下,一條指令跑完兩階段:
+make run -- -t prepare && make run -- -t flash
 ```
 
 > 這是能完整燒錄成功的最小流程。若燒錄中途卡住，再套用 [前置需求](#前置需求) 裡的 USB 調整。`make run` 首次會自動 build 缺少的 stage image。
