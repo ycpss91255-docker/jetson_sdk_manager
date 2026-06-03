@@ -69,6 +69,31 @@ _assert_unix_fs() {
   esac
 }
 
+# NVIDIA's on-device flash agent formats the APP (rootfs) partition with
+# `mkfs.ext4 -F`, whose default block discard (TRIM) on a large eMMC can take
+# minutes with no USB traffic. During that idle window the flash-stage USB link
+# can drop, killing the rootfs write — the flash dies at "Discarding device
+# blocks" with a misleading "cannot mount NFS server" / Return value 114.
+# `-E nodiscard` makes the format instant and removes that window.
+#
+# Patch the generated, device-served copy (l4t_initrd_flash copies images/
+# l4t_flash_from_kernel.sh to the target at flash time). Idempotent, and a
+# no-op if a future BSP changes the mkfs line (the match point is gone).
+_patch_skip_emmc_discard() {
+  local kf="$1/tools/kernel_flash/images/l4t_flash_from_kernel.sh"
+  [[ -f "${kf}" ]] || return 0
+  if grep -Fq 'nodiscard' "${kf}" 2>/dev/null; then
+    return 0
+  fi
+  if ! grep -Fq '"${tool}" -F "${APP_partition}"' "${kf}" 2>/dev/null; then
+    printf '  (eMMC skip-discard patch point not found — BSP flash script changed; left as-is)\n' >&2
+    return 0
+  fi
+  # File is generated under sudo and may be root-owned.
+  sudo sed -i 's@"${tool}" -F "${APP_partition}"@"${tool}" -F -E nodiscard "${APP_partition}"@' "${kf}"
+  printf '  Patched APP-partition format to skip eMMC discard (prevents USB-link drop mid-flash)\n' >&2
+}
+
 main() {
   _step "0/10 Verifying L4T_ROOT filesystem is unix-compatible"
   _assert_unix_fs "${L4T_ROOT}"
@@ -223,6 +248,8 @@ main() {
   else
     printf '  Flash images already generated — skipping\n' >&2
   fi
+
+  _patch_skip_emmc_discard "${l4t_dir}"
 
   cat <<EOF >&2
 

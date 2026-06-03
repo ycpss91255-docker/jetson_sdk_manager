@@ -60,6 +60,16 @@ EOF
 printf '%s\n' "\$@" >>"${ARGV_LOG}"
 EOF
   chmod +x "${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash.sh"
+
+  # Fixture of NVIDIA's generated on-device flash script — prepare.sh patches
+  # its APP-partition format line to skip the eMMC discard.
+  mkdir -p "${L4T_DIR}/tools/kernel_flash/images"
+  cat >"${L4T_DIR}/tools/kernel_flash/images/l4t_flash_from_kernel.sh" <<'EOF'
+#!/usr/bin/env bash
+local tool=mkfs.ext4
+"${tool}" -F "${APP_partition}"
+EOF
+
   export L4T_ROOT
 
   # Pre-populate the volume marker so prepare.sh skips the BSP / rootfs
@@ -279,6 +289,21 @@ EOF
   assert_output --partial 'storage mode'
   run cat "${ARGV_LOG}"
   refute_output --partial '--flash-only'
+}
+
+@test "prepare patches the on-device flash script to skip eMMC discard" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  KF="${L4T_DIR}/tools/kernel_flash/images/l4t_flash_from_kernel.sh"
+  run "${SCRIPT_DIR}/prepare.sh"
+  assert_success
+  run cat "${KF}"
+  assert_output --partial '"${tool}" -F -E nodiscard "${APP_partition}"'
+  # idempotent: a second prepare must not double-patch
+  run "${SCRIPT_DIR}/prepare.sh"
+  assert_success
+  run grep -c nodiscard "${KF}"
+  assert_output '1'
 }
 
 @test "prepare records the resolved storage mode in the marker" {
