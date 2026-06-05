@@ -40,8 +40,23 @@ EOF
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${MODPROBE_LOG}"
 EOF
+  MOUNT_LOG="${BATS_TEST_TMPDIR}/mount.log"
+  export MOUNT_LOG
+  cat >"${STUB_BIN}/mount" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${MOUNT_LOG}"
+EOF
+  # mountpoint: report "not a mountpoint" so the bind branch runs.
+  cat >"${STUB_BIN}/mountpoint" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
   chmod +x "${STUB_BIN}"/*
   export PATH="${STUB_BIN}:${PATH}"
+
+  # Keep the /srv bind step inside the tmpdir (no real root writes).
+  export L4T_EXPORT_SRC="${BATS_TEST_TMPDIR}/data/jetson_l4t"
+  export L4T_EXPORT_DIR="${BATS_TEST_TMPDIR}/srv/jetson_l4t"
 
   # Redirect the usbcore sysfs writes to a writable tmp dir.
   USBCORE_PARAMS="${BATS_TEST_TMPDIR}/usbcore"
@@ -66,6 +81,22 @@ EOF
   assert_output -- '-1'
   run cat "${USBCORE_PARAMS}/usbfs_memory_mb"
   assert_output '2048'
+
+  run cat "${MOUNT_LOG}"
+  assert_output --partial '--bind'
+  assert_output --partial "${L4T_EXPORT_DIR}"
+}
+
+@test "host_setup skips the bind when /srv is already a mountpoint" {
+  cat >"${STUB_BIN}/mountpoint" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "${STUB_BIN}/mountpoint"
+  run "${HOST_SETUP}"
+  assert_success
+  assert_output --partial 'already bind-mounted'
+  [[ ! -s "${MOUNT_LOG}" ]]   # mount never called
 }
 
 @test "host_setup honors USBFS_MEMORY_MB override" {
