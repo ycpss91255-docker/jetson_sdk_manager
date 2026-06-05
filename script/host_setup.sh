@@ -11,6 +11,13 @@
 #                                 to the Jetson's initrd over a local NFS export
 #   3. USB autosuspend off      — stop the kernel parking the port mid-write
 #   4. usbfs_memory_mb = 2048   — stop tegrarcm / NFS bulk writes stalling
+# NetworkManager is the other half of a reliable flash, but it is a
+# FLASH-SCOPED toggle (NM must ignore the Jetson USB gadget while flashing,
+# but manage it once the board boots so the host gets 192.168.55.100). That
+# lives in its own script, NOT here:
+#   ./script/nm_flash_guard.sh disable   # before `make run -- -t flash`
+#   ./script/nm_flash_guard.sh enable    # after, to reach the booted board
+# Without it the in-container flash stalls mid-transfer — see issue #48.
 #
 # Safe to re-run. The kernel bits need root, so you may be prompted for sudo.
 # These settings reset on reboot; re-run after each boot (or persist nfsd via
