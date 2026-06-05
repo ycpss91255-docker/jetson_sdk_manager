@@ -82,6 +82,9 @@ storage:
 # Equivalent to running `l4t_create_default_user.sh` with these args.
 user:
   username: jetson
+  # SECURITY: 'jetson/jetson' is a well-known default credential. Change the
+  # password here before `prepare` (it is baked into the rootfs), or change it
+  # on the device right after first boot (`passwd`). Do not ship it as-is.
   password: jetson
   hostname: jetson-agx
   autologin: false  # true: pre-login at boot; false: prompt at gdm.

@@ -12,6 +12,8 @@ storage:
 
 user:
   username: jetson
+  # SECURITY: 'jetson/jetson' is a default — change it before `prepare` or with
+  # `passwd` on the device after first boot. See _example.yaml.
   password: jetson
   hostname: jetson-agx
   autologin: false

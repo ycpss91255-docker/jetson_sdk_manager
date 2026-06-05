@@ -57,6 +57,12 @@ _assert_unix_fs() {
 # Patch the generated, device-served copy (l4t_initrd_flash copies images/
 # l4t_flash_from_kernel.sh to the target at flash time). Idempotent, and a
 # no-op if a future BSP changes the mkfs line (the match point is gone).
+#
+# HITL-ONLY: CI cannot verify this. It depends on the exact mkfs line in a
+# BSP-generated script that only exists after a real `prepare` run, and the
+# fix's effect (no USB-link drop mid-flash) is only observable when flashing
+# physical hardware. A BSP bump that changes the match point silently turns
+# this into a no-op — only a hardware flash catches that regression.
 _patch_skip_emmc_discard() {
   local kf="$1/tools/kernel_flash/images/l4t_flash_from_kernel.sh"
   [[ -f "${kf}" ]] || return 0
@@ -127,9 +133,14 @@ main() {
   volume_record_storage_mode "${jp}" "${hw_target}" "${STORAGE_MODE}"
 
   _step "4/10 Downloading BSP + rootfs tarballs (skip if cached)"
-  local bsp_tar rootfs_tar
-  bsp_tar=$(download_if_missing "${BSP_URL}")
-  rootfs_tar=$(download_if_missing "${ROOTFS_URL}")
+  # Optional per-asset checksums (issue #62). When present in _l4t_mapping.yaml
+  # they are enforced; when absent, download.sh falls back to a bzip2 magic-byte
+  # sniff so a saved error page / truncated transfer is still caught.
+  local bsp_sha rootfs_sha bsp_tar rootfs_tar
+  bsp_sha=$(yaml_get_optional "${L4T_MAPPING_YAML}" ".jetpack_to_l4t.\"${jp}\".bsp_sha256" '')
+  rootfs_sha=$(yaml_get_optional "${L4T_MAPPING_YAML}" ".jetpack_to_l4t.\"${jp}\".rootfs_sha256" '')
+  bsp_tar=$(download_if_missing "${BSP_URL}" '' "${bsp_sha}")
+  rootfs_tar=$(download_if_missing "${ROOTFS_URL}" '' "${rootfs_sha}")
 
   _step "5/10 Extracting BSP"
   if ! volume_phase_done "${jp}" "${hw_target}" "bsp"; then
