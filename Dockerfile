@@ -8,6 +8,9 @@
 #   prepare         - NVIDIA factory flash phase 1 (host-side image build)
 #   flash           - NVIDIA factory flash phase 2 (write to Jetson over USB)
 #   probe           - Diagnostic: scan USB for Jetson APX recovery device
+#   sdkm-base       - Shared SDK Manager layer (sdkmanager + iptables + dnsutils)
+#   cli             - SDK Manager headless CLI (best-effort flash path)
+#   cli-test        - cli sanity check (ephemeral)
 #   inspector       - SDK Manager GUI for catalog browsing (NOT flashing)
 #   inspector-test  - inspector sanity check (ephemeral)
 
@@ -231,6 +234,7 @@ RUN shellcheck -S warning /lint/wrapper/*.sh /lint/lib/*.sh && \
     shellcheck -S warning \
         /lint/prepare.sh /lint/flash.sh /lint/probe.sh /lint/clean.sh \
         /lint/inspector-entrypoint.sh /lint/nm_flash_guard.sh \
+        /lint/sdkm-entrypoint.sh \
         /lint/init_data_dirs.sh /lint/entrypoint.sh \
         /lint/script_lib/*.sh
 WORKDIR /lint
@@ -256,6 +260,8 @@ COPY --chmod=0755 script/probe.sh /opt/jetson_install/probe.sh
 # Host-side flash guard (#50 auto mode) — copied so its bats unit test
 # exercises the watcher instead of skipping. Sources lib/usb.sh below.
 COPY --chmod=0755 script/nm_flash_guard.sh /opt/jetson_install/nm_flash_guard.sh
+# SDK Manager launcher (#51) — copied so its fs-guard bats test runs.
+COPY --chmod=0755 script/sdkm-entrypoint.sh /opt/jetson_install/sdkm-entrypoint.sh
 COPY --chmod=0755 script/lib /opt/jetson_install/lib
 
 # Smoke test (shared from template + repo-specific)
@@ -267,22 +273,20 @@ USER "${USER}"
 
 RUN bats /smoke_test/
 
-############################## inspector ##############################
-# SDK Manager GUI for browsing the JetPack component catalog and
-# downloading individual .deb packages. NOT for flashing -- the GUI's
-# Install button is fundamentally broken inside Docker (NFS server,
-# iptables, USB device-mode forwarding all fail even with
-# --privileged --network host). The production flash path uses the
-# prepare + flash stages below; inspector-entrypoint.sh prints a
-# warning banner explaining this before launching the GUI.
-FROM devel AS inspector
+############################## sdkm-base ##############################
+# Shared SDK Manager layer for the cli + inspector stages. Installs SDK
+# Manager (from NVIDIA's CUDA apt repo) plus the two pieces its in-Docker
+# device-mode flash forwarding needs but the base image lacks: iptables
+# (the NAT MASQUERADE rule) and dnsutils (the `dig @8.8.8.8` reachability
+# probe device_mode_host_setup.sh runs). Kept separate from devel so the
+# factory prepare/flash path stays slim (no SDK Manager, no CUDA repo).
+# yq for /etc/jetson.yaml lookup is already in devel.
+FROM devel AS sdkm-base
 
 USER root
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# CUDA repo + SDK Manager itself. yq for /etc/jetson.yaml lookup is
-# already in devel (see the GitHub-release install there).
 # hadolint ignore=DL4006,SC1091
 RUN . /etc/os-release && \
     UBUNTU_VER=$(echo "${VERSION_ID}" | tr -d '.') && \
@@ -291,10 +295,45 @@ RUN . /etc/os-release && \
     rm cuda-keyring_1.1-1_all.deb && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-        sdkmanager \
+        sdkmanager iptables dnsutils \
         && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# sdkm-entrypoint.sh guards the SDK Manager data dir against non-unix
+# filesystems (shared lib/fs.sh) before launching SDK Manager. Mirrors
+# the runtime layout used by prepare/flash (/opt/jetson_install/).
+COPY --chmod=0755 script/sdkm-entrypoint.sh /opt/jetson_install/sdkm-entrypoint.sh
+COPY --chmod=0755 script/lib /opt/jetson_install/lib
+
+ARG USER
+USER "${USER}"
+
+############################## cli ##############################
+# SDK Manager headless CLI. Best-effort flashing path -- the factory
+# prepare/flash stages remain the CI-guarded default; SDK Manager is
+# documented as best-effort. iptables + dnsutils (from sdkm-base) fix the
+# "Device mode forwarding host setup failed" that previously blocked the
+# in-Docker flash. Shares the same ./data mounts as inspector.
+FROM sdkm-base AS cli
+
+CMD ["/opt/jetson_install/sdkm-entrypoint.sh", "sdkmanager", "--cli"]
+
+############################## cli-test ##############################
+FROM cli AS cli-test
+
+RUN sdkmanager --ver
+
+############################## inspector ##############################
+# SDK Manager GUI for browsing the JetPack component catalog and
+# downloading individual .deb packages. The GUI's Install/flash button
+# is best-effort inside Docker; inspector-entrypoint.sh prints a banner
+# pointing at the factory prepare + flash stages for the supported path.
+FROM sdkm-base AS inspector
+
+USER root
+
+ARG DEBIAN_FRONTEND=noninteractive
 
 COPY config/packages/ /tmp/packages/
 
