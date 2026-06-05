@@ -1,0 +1,111 @@
+name: Upstream Drift Check
+
+# Weekly canary that catches upstream rot before a user hits it:
+#   - NVIDIA L4T BSP / rootfs download URLs for the pinned JetPack go dead.
+#   - NVIDIA's CUDA apt repo stops shipping an installable `sdkmanager`.
+# On any failure it opens (or reuses) a single tracking issue.
+
+on:
+  schedule:
+    # 06:17 UTC every Monday.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+# Fixed prefix used to de-dupe the tracking issue across weekly runs.
+env:
+  ISSUE_TITLE_PREFIX: '[drift-check] Upstream drift detected'
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          set -euo pipefail
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Check JetPack 6.2.2 download URLs are alive
+        id: urls
+        run: |
+          set -uo pipefail
+          mapping="config/jetson/_l4t_mapping.yaml"
+          bsp_url="$(yq -r '.jetpack_to_l4t."6.2.2".bsp_url' "${mapping}")"
+          rootfs_url="$(yq -r '.jetpack_to_l4t."6.2.2".rootfs_url' "${mapping}")"
+          echo "bsp_url=${bsp_url}"
+          echo "rootfs_url=${rootfs_url}"
+          status=0
+          for url in "${bsp_url}" "${rootfs_url}"; do
+            if [ -z "${url}" ] || [ "${url}" = "null" ]; then
+              echo "::error::missing URL in ${mapping}"
+              status=1
+              continue
+            fi
+            if curl -fsSIL --retry 3 --retry-delay 5 -o /dev/null "${url}"; then
+              echo "OK   ${url}"
+            else
+              echo "::error::dead URL (HEAD failed): ${url}"
+              status=1
+            fi
+          done
+          echo "ok=${status}" >> "${GITHUB_OUTPUT}"
+          exit "${status}"
+
+      - name: Check sdkmanager is still installable from NVIDIA's CUDA apt repo
+        if: ${{ always() }}
+        id: sdkmanager
+        run: |
+          set -uo pipefail
+          # NVIDIA ships sdkmanager from the CUDA apt repo (ubuntu2204/x86_64).
+          docker run --rm ubuntu:22.04 bash -c '
+            set -uo pipefail
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates curl gnupg
+            keyring="cuda-keyring_1.1-1_all.deb"
+            curl -fsSL -o "/tmp/${keyring}" \
+              https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/${keyring}
+            dpkg -i "/tmp/${keyring}"
+            apt-get update -qq
+            # apt-cache policy is enough to confirm the package is published and
+            # has an install candidate without pulling the full payload.
+            apt-cache policy sdkmanager
+            apt-get install -y --no-install-recommends --dry-run sdkmanager
+          '
+          rc=$?
+          if [ "${rc}" -ne 0 ]; then
+            echo "::error::sdkmanager is no longer installable from the CUDA apt repo"
+          fi
+          echo "ok=${rc}" >> "${GITHUB_OUTPUT}"
+          exit "${rc}"
+
+      - name: Open or reuse a tracking issue on failure
+        if: ${{ failure() }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          title="${ISSUE_TITLE_PREFIX}"
+          body="$(printf 'The weekly upstream drift check failed.\n\nRun: %s\n\nLikely causes:\n- A pinned NVIDIA L4T BSP/rootfs download URL went dead.\n- sdkmanager is no longer installable from NVIDIA'"'"'s CUDA apt repo.\n\nSee the failed run logs above for the exact step.' "${run_url}")"
+
+          # De-dupe: reuse the existing open tracking issue if one is already open.
+          existing="$(gh issue list --state open --search "in:title \"${ISSUE_TITLE_PREFIX}\"" \
+            --json number,title \
+            --jq "map(select(.title | startswith(\"${ISSUE_TITLE_PREFIX}\"))) | .[0].number // empty")"
+
+          if [ -n "${existing}" ]; then
+            echo "Reusing existing tracking issue #${existing}"
+            gh issue comment "${existing}" --body "${body}"
+          else
+            echo "Opening a new tracking issue"
+            gh issue create --title "${title}" --body "${body}" --label bug
+          fi
