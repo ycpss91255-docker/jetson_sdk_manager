@@ -17,6 +17,12 @@ JETSON_USB_VENDOR='0955'
 # any Jetson on the bus in recovery right now?".
 JETSON_RECOVERY_PIDS=('7023' '7223' '7423' '7523' '7e19')
 
+# Booted L4T device-mode PID. After a successful flash the Jetson reboots
+# and re-enumerates as this — its usb0 gadget now runs a DHCP server
+# (192.168.55.1) and you WANT NetworkManager managing the host side again.
+# nm_flash_guard.sh's auto mode watches for this PID to flip NM back on.
+JETSON_BOOTED_PID='7020'
+
 # jetson_pid_is_recovery <pid>
 # Echoes nothing; returns 0 when the PID is in the recovery list.
 # Case-folds the input so an uppercase hex PID (e.g. 7E19 from some
@@ -40,6 +46,14 @@ jetson_in_recovery() {
     fi
   done
   return 1
+}
+
+# jetson_is_booted_l4t
+# Returns 0 if a Jetson that has finished flashing and booted into the OS
+# device-mode (JETSON_BOOTED_PID) is on the USB bus. nm_flash_guard.sh
+# auto mode polls this to know when to hand usb0 back to NetworkManager.
+jetson_is_booted_l4t() {
+  lsusb -d "${JETSON_USB_VENDOR}:${JETSON_BOOTED_PID}" 2>/dev/null | grep -q .
 }
 
 # jetson_list_devices

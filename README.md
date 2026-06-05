@@ -35,10 +35,11 @@ ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # pick a preset
 
 make run -- -t prepare    # Phase 1: download BSP + build flash images (~30 min)
 # Put Jetson in APX recovery (hold REC + tap RESET)
+./script/nm_flash_guard.sh auto   # stop NetworkManager tearing down the USB transfer; auto-restores when the board boots
 make run -- -t flash      # Phase 2: write images to Jetson (~10 min)
 
 # ...or, with the Jetson already in APX recovery, do both in one command:
-make run -- -t prepare && make run -- -t flash
+make run -- -t prepare && ./script/nm_flash_guard.sh auto && make run -- -t flash
 ```
 
 > `./script/host_setup.sh` bundles the per-boot host prerequisites (see [Prerequisites](#prerequisites)); `make run` auto-builds a missing stage image on first invocation. For an explained walkthrough — `make build` per stage, post-flash `nvidia-jetpack` install, headless access, and resume behaviour — see [Quick Start](#quick-start).
@@ -122,8 +123,11 @@ make run -- -t prepare
 make build -- -t probe   # one stage per build — last -t wins, so build them separately
 make build -- -t flash
 make run -- -t probe     # confirm Jetson visible in APX (exits 0 on success)
+./script/nm_flash_guard.sh auto   # see "NetworkManager" note below
 make run -- -t flash
 ```
+
+On a host running NetworkManager (most laptops/desktops), the flash can stall partway with a misleading `NFS server` / `Error 114` failure: NM tries to DHCP the Jetson's USB gadget interface, times out, and removes the address mid-transfer. `./script/nm_flash_guard.sh auto` marks that interface unmanaged for the flash, then **re-enables NM automatically the moment the board re-enumerates as the booted device (`0955:7020`)** — so the host immediately picks up `192.168.55.x` and you can SSH in, with no manual `enable` step. A timeout (default 1800s, override with the first arg) restores NM even if the flash aborts. See [`nm_flash_guard.sh`](script/nm_flash_guard.sh) for `disable` / `enable` / `around` / `status` subcommands.
 
 After the Jetson boots into the freshly flashed OS, install the rest of JetPack from NVIDIA's OTA apt repository:
 
