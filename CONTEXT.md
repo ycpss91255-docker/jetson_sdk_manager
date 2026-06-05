@@ -40,9 +40,9 @@ _Avoid_: write stage, deploy stage, phase-2 stage
 Diagnostic. Scans host USB for NVIDIA-vendor (`0x0955`) devices, annotates which PIDs are in the Tegra APX recovery range, and exits non-zero unless at least one Jetson is in recovery. Config-free — does not read `jetson.yaml` and does not touch L4T data. Container entrypoint is `script/probe.sh`; reuses the vendor/PID list in `script/lib/usb.sh` that `flash.sh` also enforces.
 _Avoid_: sanity stage, lsusb stage
 
-**inspector stage**:
-SDK Manager GUI shipped as a **catalog browser only**. Its Install button does not work inside Docker (see [ADR 0003](doc/adr/0003-skip-sdk-manager-for-flashing.md)); the entrypoint prints a banner saying so. Not part of the flash workflow.
-_Avoid_: GUI stage, browser stage, sdkm stage
+**cli / gui stages**:
+SDK Manager's headless (`sdkmanager --cli`) and graphical clients, shipped as **best-effort** flash paths and JetPack catalog browsers on the shared `sdkm-base` layer. Not the supported default (factory `prepare` / `flash` is) — see [ADR 0004](doc/adr/0004-sdk-manager-best-effort-path.md). The `gui` entrypoint prints a banner naming the host prerequisites.
+_Avoid_: inspector stage, browser stage, sdkm stage
 
 ## Example dialogue
 
@@ -54,6 +54,6 @@ _Avoid_: GUI stage, browser stage, sdkm stage
 >
 > **Maintainer:** No — `storage.device: emmc` resolves to internal storage mode, and there is no kernel device path to override. `device_path` is rejected when the device alias is internal. If you want to flash a USB SSD, change the alias to `usb` first.
 >
-> **Dev:** And the inspector stage?
+> **Dev:** And the gui stage?
 >
-> **Maintainer:** Inspector is just SDK Manager's catalog GUI. Don't use it to flash — its Install button is broken in Docker. The flash path is `prepare` then `flash`.
+> **Maintainer:** `gui` (and `cli`) are SDK Manager, shipped best-effort. They *can* flash now — the old "broken in Docker" claim was a host NetworkManager issue plus missing iptables/dnsutils, both fixed — but the supported default is still `prepare` then `flash`. Use SDK Manager only if you specifically want its UI or the JetPack catalog.

@@ -5,7 +5,7 @@
 # `script/flash.sh` (pre-flight check before writing) and
 # `script/probe.sh` (standalone diagnostic) read the same authoritative
 # set. PIDs come from /usr/share/sdkmanager/Assets/Manifest.json on the
-# inspector image; extend the list when a new SKU ships.
+# cli/gui image; extend the list when a new SKU ships.
 
 set -euo pipefail
 
