@@ -17,7 +17,7 @@ Containerized NVIDIA Jetson Linux (L4T) factory-flash workflow for Jetson Orin d
 - [Quick Start](#quick-start)
 - [Stages](#stages)
 - [Clean Targets](#clean-targets)
-- [Inspector (SDK Manager GUI)](#inspector-sdk-manager-gui)
+- [SDK Manager (cli / gui)](#sdk-manager-cli--gui)
 - [Persistent Data](#persistent-data)
 - [Architecture](#architecture)
 - [Smoke Tests](#smoke-tests)
@@ -50,7 +50,7 @@ NVIDIA SDK Manager's GUI / `--cli` workflow flashes a Jetson by running an NFS s
 
 This repo bypasses that path entirely. The **prepare** stage uses the BSP's own `l4t_initrd_flash.sh --no-flash` to build flash images host-side (no Jetson, no NFS, no `iptables`); the **flash** stage then writes them with `--flash-only`: the Jetson boots a minimal initrd over the `tegrarcm_v2` USB link and pulls the images from a local NFS export on that same link. That export still needs the host's `nfsd` kernel module loaded (see [Prerequisites](#prerequisites)), but — unlike SDK Manager — there is no `iptables` manipulation and no `usb-gadget` device-mode forwarding, so it works reliably in a privileged container.
 
-SDK Manager is still shipped — in the **`inspector`** stage — as a catalog browser for looking up which `.deb` packages a given JetPack release contains. Its Install button stays broken inside Docker; the entrypoint prints a banner saying so.
+SDK Manager is still shipped — as best-effort **`cli`** and **`gui`** stages — for browsing the JetPack catalog and, with the prerequisites set up (`host_setup.sh`, `nm_flash_guard.sh auto`, an NVIDIA login), flashing. It is not the supported default; see [SDK Manager (cli / gui)](#sdk-manager-cli--gui).
 
 ## Prerequisites
 
@@ -161,11 +161,11 @@ Each phase records progress in `data/jetson_l4t/.../.prepared.yaml`. Re-running 
 | `prepare` | Phase 1 — download BSP + sample rootfs, `apply_binaries.sh`, `l4t_create_default_user.sh`, `l4t_initrd_flash --no-flash`. | No |
 | `flash` | Phase 2 — `l4t_initrd_flash --flash-only`. | **Yes**, in APX recovery |
 | `probe` | Diagnostic. Scans USB for NVIDIA vendor `0955`, annotates each device with recovery vs not, exits non-zero unless at least one Jetson is in APX. Run before flash to confirm the link without committing to a full flash. | Recommended |
-| `sdkm-base` | Shared SDK Manager layer (`sdkmanager` + `iptables` + `dnsutils`) for `cli` / `inspector`. Not run directly. Keeps `devel` slim. | No |
+| `sdkm-base` | Shared SDK Manager layer (`sdkmanager` + `iptables` + `dnsutils`) for `cli` / `gui`. Not run directly. Keeps `devel` slim. | No |
 | `cli` | SDK Manager **headless CLI** — a best-effort alternative flash path (`sdkmanager --cli`). The factory `prepare`/`flash` stages remain the supported default. | For flashing |
 | `cli-test` | `sdkmanager --ver` sanity check. CI-only. | No |
-| `inspector` | SDK Manager GUI for browsing the JetPack component catalog. Flash button is best-effort — see [Inspector](#inspector-sdk-manager-gui). | No |
-| `inspector-test` | `sdkmanager --ver` sanity check. CI-only. | No |
+| `gui` | SDK Manager **GUI** — best-effort flash + JetPack catalog browser. See [SDK Manager (cli / gui)](#sdk-manager-cli--gui). | For flashing |
+| `gui-test` | `sdkmanager --ver` sanity check. CI-only. | No |
 
 ## Clean Targets
 
@@ -180,16 +180,16 @@ Each phase records progress in `data/jetson_l4t/.../.prepared.yaml`. Re-running 
 
 Run `./script/clean.sh l4t` to recover from a JetPack version mismatch reported by `prepare.sh`.
 
-## Inspector (SDK Manager GUI)
+## SDK Manager (cli / gui)
 
-The `inspector` stage ships NVIDIA SDK Manager as a **catalog browser** — not a flash tool. Use it to look up which `.deb` packages a given JetPack release contains, or to download individual `.deb` files outside of `apt install nvidia-jetpack`.
+The factory `prepare` / `flash` stages are the supported default. SDK Manager is shipped as two **best-effort** stages for users who prefer NVIDIA's own tool or want to browse the JetPack `.deb` catalog: `cli` (`sdkmanager --cli`) and `gui` (the graphical client). Both build on `sdkm-base`, which adds the `iptables` + `dnsutils` that SDK Manager's in-Docker device-mode forwarding needs.
 
 ```bash
-make build -- -t inspector
-make run -- -t inspector
+make build -- -t gui    # or: -t cli
+make run -- -t gui      # or: -t cli
 ```
 
-The entrypoint prints a banner explaining why the Install button is broken inside Docker, then (in interactive mode) waits for Enter before launching the GUI. Any extra positional args after `-t inspector` are forwarded verbatim to `sdkmanager-gui` (after `--no-sandbox`). The warning banner and the Enter prompt are always shown and cannot be disabled.
+Best-effort means: CI builds the stages and smokes `sdkmanager --ver`, but a real SDK Manager flash is manual and may drift with NVIDIA upstream. For a GUI/CLI flash to succeed, set up the same host prerequisites as the factory path first — `./script/host_setup.sh` and `./script/nm_flash_guard.sh auto` — and sign in with your NVIDIA Developer account. The `gui` entrypoint prints a banner with these steps, then (interactively) waits for Enter before launching; extra positional args after `-t gui` are forwarded to `sdkmanager-gui` (after `--no-sandbox`). GUI mode needs an X11 session on the host (auto-forwarded by the base template).
 
 GUI mode requires an X11 session on the host; the base template auto-detects `$DISPLAY` and forwards the X11 socket + `XAUTHORITY`.
 
@@ -201,9 +201,9 @@ Each path under `./data/` is bind-mounted into the container (gitignored).
 |---|---|---|
 | `./data/jetson_l4t/` | `/srv/jetson_l4t` | BSP + rootfs + generated flash images (factory-flash workflow). **Must be ext4 / xfs / btrfs.** |
 | `./data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | Cached tarballs (BSP + sample rootfs), shared with SDK Manager. |
-| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager login session cache. Inspector stage only. |
-| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager-managed SDK install folder. Inspector stage only. |
-| `./jetson.yaml` | `/etc/jetson.yaml` (read-only) | User config, read by `prepare.sh` / `flash.sh` / `inspector-entrypoint.sh`. |
+| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager login session cache. `cli` / `gui` stages only. |
+| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager-managed SDK install folder. `cli` / `gui` stages only. |
+| `./jetson.yaml` | `/etc/jetson.yaml` (read-only) | User config, read by `prepare.sh` / `flash.sh` / `gui-entrypoint.sh`. |
 
 ## Architecture
 
@@ -225,11 +225,12 @@ graph TD
     devel --> sdkm-base["sdkm-base\n+ SDK Manager + iptables + dnsutils"]
     EXT4 --> sdkm-base
     sdkm-base --> cli["cli\nCMD sdkmanager --cli\n(best-effort flash path)"]
-    sdkm-base --> inspector["inspector\n+ X11 libs\nCMD inspector-entrypoint.sh"]
+    sdkm-base --> gui["gui\n+ X11 libs\nCMD gui-entrypoint.sh"]
 
     EXT1 --> devel-test["devel-test (ephemeral)\nshellcheck + hadolint + bats"]
     devel --> devel-test
-    inspector --> inspector-test["inspector-test (ephemeral)\nsdkmanager --ver"]
+    gui --> gui-test["gui-test (ephemeral)\nsdkmanager --ver"]
+    cli --> cli-test["cli-test (ephemeral)\nsdkmanager --ver"]
 ```
 
 ## Smoke Tests
@@ -240,7 +241,7 @@ See [TEST.md](doc/test/TEST.md).
 make build test
 ```
 
-The `devel-test` stage runs the bats suite against the `devel` image; the two `sdkmanager` assertions are skipped there (they only run when bats is re-executed inside the `inspector` image).
+The `devel-test` stage runs the bats suite against the `devel` image; the two `sdkmanager` assertions are skipped there (they only run when bats is re-executed inside the `cli` / `gui` images).
 
 ## Directory Structure
 
@@ -248,21 +249,21 @@ The `devel-test` stage runs the bats suite against the `devel` image; the two `s
 jetson_sdk_manager/
 ├── jetson.yaml -> config/jetson/agx-orin-emmc.yaml   # symlink; switch presets here
 ├── compose.yaml                 # Docker Compose (derived, gitignored)
-├── Dockerfile                   # sys → devel-base → devel → {prepare, flash, inspector}
+├── Dockerfile                   # sys → devel-base → devel → {prepare, flash, probe, sdkm-base → cli/gui}
 ├── Makefile -> .base/script/docker/Makefile
 ├── .base/                       # Shared template (git subtree)
 ├── data/                        # Persistent state (gitignored)
 │   ├── jetson_l4t/              #   BSP + rootfs + flash images
 │   ├── downloads/               #   BSP / rootfs tarballs
-│   ├── nvsdkm/                  #   SDK Manager login session (inspector)
-│   └── nvidia_sdk/              #   SDK Manager install folder (inspector)
+│   ├── nvsdkm/                  #   SDK Manager login session (cli/gui)
+│   └── nvidia_sdk/              #   SDK Manager install folder (cli/gui)
 ├── config/
 │   ├── docker/setup.conf        # Runtime config — source of truth
 │   ├── jetson/                  # Flash presets + schema
 │   │   ├── _example.yaml        #   Canonical schema with comments
 │   │   ├── _l4t_mapping.yaml    #   JetPack → L4T release / URLs (build-time)
 │   │   └── *.yaml               #   Per-board / per-storage presets
-│   └── packages/                # X11 lib lists for inspector (per Ubuntu codename)
+│   └── packages/                # X11 lib lists for the gui stage (per Ubuntu codename)
 ├── doc/
 │   ├── adr/                     # Architecture Decision Records
 │   ├── changelog/CHANGELOG.md
@@ -275,7 +276,7 @@ jetson_sdk_manager/
 │   ├── prepare.sh               # Phase 1 entrypoint
 │   ├── flash.sh                 # Phase 2 entrypoint
 │   ├── clean.sh                 # Volume cleanup targets
-│   ├── inspector-entrypoint.sh  # SDK Manager GUI launcher + warning banner
+│   ├── gui-entrypoint.sh        # SDK Manager GUI launcher + best-effort banner
 │   ├── lib/                     # yaml / download / volume / errors helpers
 │   ├── host_setup.sh            # One-shot per-boot host prereqs (qemu/nfsd/USB)
 │   ├── init_data_dirs.sh        # First-time data/ mkdir as non-root

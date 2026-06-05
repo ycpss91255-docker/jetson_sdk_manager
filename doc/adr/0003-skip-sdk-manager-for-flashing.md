@@ -1,5 +1,7 @@
 # Skip SDK Manager for the flash path; use l4t_initrd_flash directly
 
+> **Amended by [ADR-0004](0004-sdk-manager-best-effort-path.md).** The default below (factory `l4t_initrd_flash`) still stands, but the "SDK Manager is fundamentally broken inside Docker" premise was disproved — SDK Manager is now restored as best-effort `cli` / `gui` stages. Read the "broken in Docker" language here as historical.
+
 NVIDIA SDK Manager flashes a Jetson by running an NFS server on the host and exporting the rootfs to the device over a USB device-mode link, bridged through the host's network stack via `iptables`. Inside Docker (even with `--privileged --network host`) this combination is non-functional: NFS server cannot bind reliably, `iptables` rules from inside the container do not always reach the host's `nftables`, and `usb-gadget` device-mode forwarding fails. The visible symptom is the well-known [Flashing - 99% stall](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066) that affects NVIDIA's own Docker image too. The production flash path is therefore implemented on top of the BSP's `l4t_initrd_flash.sh --no-flash` / `--flash-only`, which only needs a plain `tegrarcm_v2` USB link — split into the **prepare** stage (host-side image build, no Jetson) and **flash** stage (write to Jetson in APX recovery). SDK Manager is retained as the **inspector** stage for browsing the JetPack component catalog, with a banner explaining the Install button is broken inside Docker.
 
 ## Considered Options

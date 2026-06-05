@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sdkm-entrypoint.sh — guard the data dir, then launch SDK Manager.
 #
-# SDK Manager (cli/inspector stages) extracts the L4T rootfs — with a
+# SDK Manager (cli/gui stages) extracts the L4T rootfs — with a
 # setuid `sudo` and root-owned files — under ~/nvidia/nvidia_sdk, a host
 # bind mount (setup.conf → ./data/nvidia_sdk). On NTFS / exFAT / fuseblk
 # hosts those attributes are stripped, exactly like the factory path,
@@ -10,7 +10,7 @@
 # passes (e.g. `sdkmanager --cli`).
 #
 # Device-mode flash forwarding (iptables MASQUERADE + a DNS probe) is set
-# up by SDK Manager itself; the cli/inspector images ship iptables +
+# up by SDK Manager itself; the cli/gui images ship iptables +
 # dnsutils so that step no longer fails. NetworkManager handling for the
 # USB flash link is a host-side concern — see script/nm_flash_guard.sh.
 

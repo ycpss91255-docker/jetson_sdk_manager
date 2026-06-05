@@ -11,8 +11,8 @@
 #   sdkm-base       - Shared SDK Manager layer (sdkmanager + iptables + dnsutils)
 #   cli             - SDK Manager headless CLI (best-effort flash path)
 #   cli-test        - cli sanity check (ephemeral)
-#   inspector       - SDK Manager GUI for catalog browsing (NOT flashing)
-#   inspector-test  - inspector sanity check (ephemeral)
+#   gui             - SDK Manager GUI (best-effort flash + catalog browser)
+#   gui-test        - gui sanity check (ephemeral)
 
 ARG BASE_IMAGE="ubuntu:22.04"
 ARG TEST_TOOLS_IMAGE="test-tools:local"
@@ -110,7 +110,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 # Flash prerequisites for prepare.sh / flash.sh
 # (tools/kernel_flash/l4t_initrd_flash.sh). The CUDA repo + sdkmanager
-# install moved to the inspector stage -- the production flash flow
+# install moved to the sdkm-base layer -- the production flash flow
 # uses the factory workflow (prepare + flash stages) and no longer
 # depends on SDK Manager at the devel layer.
 RUN apt-get update && \
@@ -233,7 +233,7 @@ COPY script/lib /lint/script_lib
 RUN shellcheck -S warning /lint/wrapper/*.sh /lint/lib/*.sh && \
     shellcheck -S warning \
         /lint/prepare.sh /lint/flash.sh /lint/probe.sh /lint/clean.sh \
-        /lint/inspector-entrypoint.sh /lint/nm_flash_guard.sh \
+        /lint/gui-entrypoint.sh /lint/nm_flash_guard.sh \
         /lint/sdkm-entrypoint.sh \
         /lint/init_data_dirs.sh /lint/entrypoint.sh \
         /lint/script_lib/*.sh
@@ -274,7 +274,7 @@ USER "${USER}"
 RUN bats /smoke_test/
 
 ############################## sdkm-base ##############################
-# Shared SDK Manager layer for the cli + inspector stages. Installs SDK
+# Shared SDK Manager layer for the cli + gui stages. Installs SDK
 # Manager (from NVIDIA's CUDA apt repo) plus the two pieces its in-Docker
 # device-mode flash forwarding needs but the base image lacks: iptables
 # (the NAT MASQUERADE rule) and dnsutils (the `dig @8.8.8.8` reachability
@@ -314,7 +314,7 @@ USER "${USER}"
 # prepare/flash stages remain the CI-guarded default; SDK Manager is
 # documented as best-effort. iptables + dnsutils (from sdkm-base) fix the
 # "Device mode forwarding host setup failed" that previously blocked the
-# in-Docker flash. Shares the same ./data mounts as inspector.
+# in-Docker flash. Shares the same ./data mounts as gui.
 FROM sdkm-base AS cli
 
 CMD ["/opt/jetson_install/sdkm-entrypoint.sh", "sdkmanager", "--cli"]
@@ -324,12 +324,13 @@ FROM cli AS cli-test
 
 RUN sdkmanager --ver
 
-############################## inspector ##############################
-# SDK Manager GUI for browsing the JetPack component catalog and
-# downloading individual .deb packages. The GUI's Install/flash button
-# is best-effort inside Docker; inspector-entrypoint.sh prints a banner
-# pointing at the factory prepare + flash stages for the supported path.
-FROM sdkm-base AS inspector
+############################## gui ##############################
+# SDK Manager graphical client — a best-effort flashing path and JetPack
+# component-catalog browser (replaces the old "inspector" stage). The
+# Install/flash button is no longer claimed broken: gui-entrypoint.sh
+# prints a banner naming the prerequisites (host_setup.sh, nm_flash_guard
+# auto, NVIDIA login) and the CI-guarded factory flash default. See #53.
+FROM sdkm-base AS gui
 
 USER root
 
@@ -352,15 +353,15 @@ RUN . /etc/os-release && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/packages/
 
-COPY --chmod=0755 script/inspector-entrypoint.sh /usr/local/bin/inspector-entrypoint.sh
+COPY --chmod=0755 script/gui-entrypoint.sh /usr/local/bin/gui-entrypoint.sh
 
 ARG USER
 USER "${USER}"
 
-CMD ["/usr/local/bin/inspector-entrypoint.sh"]
+CMD ["/usr/local/bin/gui-entrypoint.sh"]
 
-############################## inspector-test ##############################
-FROM inspector AS inspector-test
+############################## gui-test ##############################
+FROM gui AS gui-test
 
 RUN sdkmanager --ver
 
