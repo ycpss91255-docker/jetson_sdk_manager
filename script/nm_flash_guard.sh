@@ -44,6 +44,10 @@ _ok()   { printf '  ok: %s\n' "$1" >&2; }
 
 _nm_active() { command -v nmcli >/dev/null 2>&1 && systemctl is-active --quiet NetworkManager 2>/dev/null; }
 _reload()    { sudo nmcli general reload 2>/dev/null || sudo systemctl reload NetworkManager; }
+# True only when sudo will run WITHOUT prompting. The auto-mode watcher is
+# detached (no controlling tty), so on tty_tickets hosts it cannot reuse the
+# interactive credential cached by disable() — see #77.
+_sudo_noninteractive_ok() { sudo -n true 2>/dev/null; }
 
 disable() {
   _step "Disabling NetworkManager control of USB gadget interfaces (flash mode)"
@@ -59,7 +63,16 @@ disable() {
 enable() {
   _step "Re-enabling NetworkManager control of USB gadget interfaces (normal mode)"
   if [[ -e "${CONF}" ]]; then
-    sudo rm -f "${CONF}"
+    sudo rm -f "${CONF}" 2>/dev/null || true
+    # The detached auto watcher may not be able to sudo (no tty, #77). If the
+    # guard file is still here, the removal failed — report it and return
+    # non-zero so callers (the watcher) can mark the failure instead of
+    # mistaking a still-disabled NM for success.
+    if [[ -e "${CONF}" ]]; then
+      printf '  error: could not remove %s (sudo needs a tty?) — run: sudo rm -f %s && sudo nmcli general reload\n' \
+        "${CONF}" "${CONF}" >&2
+      return 1
+    fi
     # Don't mask a real reload failure with `|| true`: if NM is active but the
     # reload fails, the guard file is gone yet NM never re-reads config, so the
     # host never DHCPs the booted board — surface it instead of printing "ok".
@@ -79,9 +92,15 @@ status() {
   else
     printf '  ENABLED (normal mode): no guard file\n' >&2
   fi
-  if [[ -e "${WATCH_PIDFILE}" ]] && kill -0 "$(cat "${WATCH_PIDFILE}" 2>/dev/null)" 2>/dev/null; then
+  if [[ -e "${WATCH_PIDFILE}.failed" ]]; then
+    printf '  AUTO watcher could not re-enable NM — %s' \
+      "$(cat "${WATCH_PIDFILE}.failed" 2>/dev/null)" >&2
+  elif [[ -e "${WATCH_PIDFILE}" ]] && kill -0 "$(cat "${WATCH_PIDFILE}" 2>/dev/null)" 2>/dev/null; then
     printf '  AUTO watcher running (PID %s) — will re-enable on boot (0955:%s)\n' \
       "$(cat "${WATCH_PIDFILE}")" "${JETSON_BOOTED_PID}" >&2
+  elif [[ -e "${WATCH_PIDFILE}" ]]; then
+    printf '  AUTO watcher pidfile present but the process is dead — if the guard is still on, run: %s enable\n' \
+      "${BASH_SOURCE[0]}" >&2
   fi
   _nm_active && nmcli device status 2>/dev/null | grep -iE 'enx|usb|DEVICE' >&2 || true
 }
@@ -90,21 +109,34 @@ status() {
 # boots (JETSON_BOOTED_PID), or unconditionally after <timeout> seconds so
 # an aborted flash never leaves NetworkManager parked off. Runs detached
 # (backgrounded by auto); also callable directly for tests.
+# _reenable_or_mark — re-enable NM and clear watcher state. If the re-enable
+# fails (e.g. the detached watcher can't sudo without a tty, #77), leave a
+# `.failed` marker so `status` reports it and the still-active guard isn't
+# mistaken for a clean exit. Output is discarded for the detached watcher, so
+# the marker file is the only channel the user can see.
+_reenable_or_mark() {
+  if enable; then
+    rm -f "${WATCH_PIDFILE}" "${WATCH_PIDFILE}.failed" 2>/dev/null || true
+  else
+    printf 'could not re-enable NetworkManager (sudo needs a tty?). Run: %s enable\n' \
+      "${BASH_SOURCE[0]}" > "${WATCH_PIDFILE}.failed" 2>/dev/null || true
+    rm -f "${WATCH_PIDFILE}" 2>/dev/null || true
+  fi
+}
+
 _watch() {
   local timeout="${1:-${AUTO_TIMEOUT_DEFAULT}}" waited=0
   while (( waited < timeout )); do
     if jetson_is_booted_l4t; then
       _step "Jetson booted (0955:${JETSON_BOOTED_PID}) — handing usb0 back to NetworkManager"
-      enable
-      rm -f "${WATCH_PIDFILE}" 2>/dev/null || true
+      _reenable_or_mark
       return 0
     fi
     sleep "${POLL_INTERVAL}"
     waited=$(( waited + POLL_INTERVAL ))
   done
   _step "Auto watcher timed out after ${timeout}s — restoring NetworkManager so it isn't left disabled"
-  enable
-  rm -f "${WATCH_PIDFILE}" 2>/dev/null || true
+  _reenable_or_mark
 }
 
 # auto [timeout] — one-shot for both flash paths: drop NM control now, then
@@ -114,6 +146,15 @@ _watch() {
 auto() {
   local timeout="${1:-${AUTO_TIMEOUT_DEFAULT}}"
   disable
+  # The watcher below is detached (no tty). On tty_tickets sudo hosts it cannot
+  # reuse the credential the interactive disable() just cached, so its post-boot
+  # re-enable will fail. Warn up front rather than silently leaving NM off (#77).
+  if ! _sudo_noninteractive_ok; then
+    _step "Heads-up: sudo needs a password on this host (tty_tickets)"
+    printf '  The background watcher has no tty and may NOT re-enable NetworkManager\n' >&2
+    printf '  after the board boots. If you cannot reach the board at 192.168.55.1,\n' >&2
+    printf '  run:  %s enable\n' "${BASH_SOURCE[0]}" >&2
+  fi
   _step "Starting auto watcher (re-enable on boot 0955:${JETSON_BOOTED_PID}, or after ${timeout}s)"
   setsid bash "${BASH_SOURCE[0]}" _watch "${timeout}" >/dev/null 2>&1 < /dev/null &
   local wpid=$!

@@ -57,3 +57,25 @@ _stub_lsusb() {
   assert_success
   assert_output --partial 'timed out'
 }
+
+@test "status surfaces a failed auto re-enable from the marker (#77)" {
+  printf 'could not re-enable NetworkManager. Run: nm_flash_guard.sh enable\n' \
+    > "${NM_GUARD_PIDFILE}.failed"
+  run bash -c "'${GUARD_SH}' status 2>&1"
+  assert_success
+  assert_output --partial 'could not re-enable'
+}
+
+@test "_watch leaves a .failed marker when it cannot re-enable (#77)" {
+  # Guard file present + a sudo stub that reports success but removes nothing,
+  # so enable() finds the guard still there and reports failure.
+  printf '[keyfile]\nunmanaged-devices=driver:rndis_host\n' > "${NM_GUARD_CONF}"
+  local stub2="${BATS_TEST_TMPDIR}/stub2"
+  mkdir -p "${stub2}"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "${stub2}/sudo"
+  chmod +x "${stub2}/sudo"
+  _stub_lsusb "printf 'Bus 001 Device 003: ID 0955:7020 NVIDIA Corp. L4T\n'"
+  PATH="${stub2}:${PATH}" run bash -c "'${GUARD_SH}' _watch 30 2>&1"
+  assert_success
+  [[ -e "${NM_GUARD_PIDFILE}.failed" ]]
+}
