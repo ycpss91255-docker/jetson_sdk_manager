@@ -161,7 +161,10 @@ Each phase records progress in `data/jetson_l4t/.../.prepared.yaml`. Re-running 
 | `prepare` | Phase 1 — download BSP + sample rootfs, `apply_binaries.sh`, `l4t_create_default_user.sh`, `l4t_initrd_flash --no-flash`. | No |
 | `flash` | Phase 2 — `l4t_initrd_flash --flash-only`. | **Yes**, in APX recovery |
 | `probe` | Diagnostic. Scans USB for NVIDIA vendor `0955`, annotates each device with recovery vs not, exits non-zero unless at least one Jetson is in APX. Run before flash to confirm the link without committing to a full flash. | Recommended |
-| `inspector` | SDK Manager GUI for browsing the JetPack component catalog. Install button does not work — see [Inspector](#inspector-sdk-manager-gui). | No |
+| `sdkm-base` | Shared SDK Manager layer (`sdkmanager` + `iptables` + `dnsutils`) for `cli` / `inspector`. Not run directly. Keeps `devel` slim. | No |
+| `cli` | SDK Manager **headless CLI** — a best-effort alternative flash path (`sdkmanager --cli`). The factory `prepare`/`flash` stages remain the supported default. | For flashing |
+| `cli-test` | `sdkmanager --ver` sanity check. CI-only. | No |
+| `inspector` | SDK Manager GUI for browsing the JetPack component catalog. Flash button is best-effort — see [Inspector](#inspector-sdk-manager-gui). | No |
 | `inspector-test` | `sdkmanager --ver` sanity check. CI-only. | No |
 
 ## Clean Targets
@@ -219,8 +222,10 @@ graph TD
     EXT3 --> prepare
     devel --> flash["flash\nCMD flash.sh\n(USB write to Jetson)"]
     devel --> probe["probe\nCMD probe.sh\n(lsusb 0955 sanity check)"]
-    devel --> inspector["inspector\n+ SDK Manager + X11 libs\nCMD inspector-entrypoint.sh"]
-    EXT4 --> inspector
+    devel --> sdkm-base["sdkm-base\n+ SDK Manager + iptables + dnsutils"]
+    EXT4 --> sdkm-base
+    sdkm-base --> cli["cli\nCMD sdkmanager --cli\n(best-effort flash path)"]
+    sdkm-base --> inspector["inspector\n+ X11 libs\nCMD inspector-entrypoint.sh"]
 
     EXT1 --> devel-test["devel-test (ephemeral)\nshellcheck + hadolint + bats"]
     devel --> devel-test

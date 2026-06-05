@@ -26,6 +26,8 @@ set -euo pipefail
 _HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/errors.sh
 . "${_HERE}/lib/errors.sh"
+# shellcheck source=lib/fs.sh
+. "${_HERE}/lib/fs.sh"
 # shellcheck source=lib/yaml.sh
 . "${_HERE}/lib/yaml.sh"
 # shellcheck source=lib/download.sh
@@ -39,34 +41,10 @@ _step() { printf '\n\033[36m[prepare] %s\033[0m\n' "$1" >&2; }
 # apply_binaries.sh creates a setuid `sudo` and root-owned files inside
 # rootfs/; NTFS / exFAT / fuseblk filesystems silently drop both, which
 # yields a broken flashed Jetson (sudo refuses to start). Abort early.
+# Shared with the SDK Manager path (sdkm-entrypoint.sh) via lib/fs.sh.
 _assert_unix_fs() {
-  local path="$1"
-  mkdir -p "${path}"
-  local fstype
-  fstype=$(stat -f -c %T "${path}" 2>/dev/null || true)
-  case "${fstype}" in
-    ext2/ext3|ext4|xfs|btrfs|zfs|tmpfs|overlayfs)
-      return 0
-      ;;
-    fuseblk|ntfs*|exfat|vfat|msdos)
-      if [[ "${JETSON_ALLOW_NON_UNIX_FS:-0}" == "1" ]]; then
-        printf '[prepare] WARNING: L4T_ROOT is on %s and JETSON_ALLOW_NON_UNIX_FS=1 — continuing anyway. The flashed Jetson may end up with a broken sudo if setuid/ownership got stripped during apply_binaries.sh.\n' \
-          "${fstype}" >&2
-        return 0
-      fi
-      emit_error \
-        --category permission \
-        --detail "L4T_ROOT (${path}) is on ${fstype} — cannot preserve setuid / root ownership" \
-        --action "Move this repo to an ext4 / xfs / btrfs partition" \
-        --action "Or bind-mount an ext4 dir over ./data/jetson_l4t/: \`sudo mkdir -p /var/lib/jetson_l4t && sudo mount --bind /var/lib/jetson_l4t ./data/jetson_l4t\`" \
-        --action "Or opt in to the unsafe path: \`JETSON_ALLOW_NON_UNIX_FS=1 make run -- -t prepare\`"
-      return 1
-      ;;
-    *)
-      printf '[prepare] Unknown filesystem type %s — proceeding (verify setuid preservation manually)\n' "${fstype}" >&2
-      return 0
-      ;;
-  esac
+  assert_unix_fs "$1" "prepare" \
+    --action "Or bind-mount an ext4 dir over ./data/jetson_l4t/: \`sudo mkdir -p /var/lib/jetson_l4t && sudo mount --bind /var/lib/jetson_l4t ./data/jetson_l4t\`"
 }
 
 # NVIDIA's on-device flash agent formats the APP (rootfs) partition with
