@@ -118,6 +118,11 @@ main() {
   printf '  nfsd kernel support present\n' >&2
 
   _step "6/6 Flashing (l4t_initrd_flash --flash-only)"
+  # HITL-ONLY: CI cannot verify this. l4t_initrd_flash boots a real Jetson
+  # initrd and serves the payload to it over NFS on the USB link — it requires
+  # physical hardware in recovery, the host nfsd module, and NetworkManager not
+  # tearing down the gadget iface (see nm_flash_guard.sh). None of that exists
+  # in CI, so the actual write path is only exercised by a hardware flash.
   local l4t_dir
   l4t_dir=$(l4t_root_path "${jp}" "${hw_target}")
   if [[ "${STORAGE_MODE}" == "internal" ]]; then

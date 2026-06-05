@@ -41,12 +41,47 @@ DOCKER_BIN="${DOCKER_BIN:-docker}"
 # NFS export bridge (step 5). L4T_EXPORT_DIR must match volume.sh's
 # L4T_ROOT_DEFAULT (/srv/jetson_l4t) and setup.conf mount_6's container path.
 L4T_EXPORT_SRC="${L4T_EXPORT_SRC:-${_REPO}/data/jetson_l4t}"
+# Track whether the caller redirected the export dir (tests do) so the
+# path-contract check below only fires for the real, un-overridden path —
+# a tmpdir override is not a contract violation.
+_L4T_EXPORT_DIR_OVERRIDDEN="${L4T_EXPORT_DIR+yes}"
 L4T_EXPORT_DIR="${L4T_EXPORT_DIR:-/srv/jetson_l4t}"
 MOUNT_BIN="${MOUNT_BIN:-mount}"
 MOUNTPOINT_BIN="${MOUNTPOINT_BIN:-mountpoint}"
+# Where to read volume.sh's canonical export path for the contract check.
+# Overridable so the smoke test can point at a fixture.
+VOLUME_LIB="${VOLUME_LIB:-${_HERE}/lib/volume.sh}"
 
 _step() { printf '\n\033[36m[host-setup] %s\033[0m\n' "$1" >&2; }
 _ok()   { printf '  ok: %s\n' "$1" >&2; }
+_warn() { printf '  \033[33mwarning: %s\033[0m\n' "$1" >&2; }
+
+# _volume_export_default — echo volume.sh's L4T_ROOT_DEFAULT without sourcing
+# it (volume.sh does `set -euo pipefail` and requires errors.sh). Returns
+# empty if it can't be read; the caller then skips the contract check rather
+# than warning on a false negative.
+_volume_export_default() {
+  [[ -r "${VOLUME_LIB}" ]] || return 0
+  sed -n 's/^L4T_ROOT_DEFAULT="\(.*\)"$/\1/p' "${VOLUME_LIB}" | head -n1
+}
+
+# _assert_path_contract — the export path lives in three places that must
+# agree (volume.sh L4T_ROOT_DEFAULT, setup.conf mount_6's container path, and
+# this script's L4T_EXPORT_DIR). They are wired up by hand, so a future edit to
+# one alone silently breaks the NFS export resolution (issue #52). Warn loudly
+# if this script's L4T_EXPORT_DIR has drifted from volume.sh's default so the
+# mismatch is caught at run time instead of in a failed flash.
+_assert_path_contract() {
+  local vol_default
+  vol_default="$(_volume_export_default)"
+  [[ -n "${vol_default}" ]] || return 0
+  # Skip when the caller explicitly redirected the path (e.g. tests).
+  [[ -z "${_L4T_EXPORT_DIR_OVERRIDDEN}" ]] || return 0
+  if [[ "${L4T_EXPORT_DIR}" != "${vol_default}" ]]; then
+    _warn "L4T_EXPORT_DIR (${L4T_EXPORT_DIR}) != volume.sh L4T_ROOT_DEFAULT (${vol_default})"
+    _warn "these must match (and setup.conf mount_6's container path too) or the NFS export won't resolve — see issue #52"
+  fi
+}
 
 main() {
   _step "1/5 Registering QEMU binfmt (ARM64 emulation for prepare)"
@@ -70,6 +105,7 @@ main() {
   _ok "usbfs_memory_mb = ${USBFS_MEMORY_MB}"
 
   _step "5/5 Bridging the NFS export path ${L4T_EXPORT_DIR} into the host namespace"
+  _assert_path_contract
   # l4t_initrd_flash serves the payload from ${L4T_EXPORT_DIR} (volume.sh
   # L4T_ROOT_DEFAULT). The container bind-mounts ./data/jetson_l4t there, but
   # the kernel nfsd that actually answers the Jetson resolves paths in the

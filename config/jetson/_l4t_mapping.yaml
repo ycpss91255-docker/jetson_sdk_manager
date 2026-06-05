@@ -23,6 +23,15 @@ jetpack_to_l4t:
     l4t_archive_tag: r36_release_v5.0
     bsp_url: https://developer.nvidia.com/downloads/embedded/l4t/r36_release_v5.0/release/Jetson_Linux_r36.5.0_aarch64.tbz2
     rootfs_url: https://developer.nvidia.com/downloads/embedded/l4t/r36_release_v5.0/release/Tegra_Linux_Sample-Root-Filesystem_r36.5.0_aarch64.tbz2
+    # OPTIONAL sha256 integrity checks (issue #62). NVIDIA does not publish
+    # per-file checksums on the archive page, so these are left empty by
+    # default: download.sh then falls back to verifying the bzip2 magic bytes
+    # (BZh) to catch a saved error page / truncated transfer. If you compute or
+    # obtain trusted checksums (e.g. `sha256sum` the downloaded tarballs once,
+    # or from an internal mirror's manifest), fill them in here to enforce an
+    # exact match on every download.
+    #bsp_sha256: ""
+    #rootfs_sha256: ""
 
 board_alias_to_target:
   agx-orin: jetson-agx-orin-devkit

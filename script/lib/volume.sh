@@ -41,6 +41,36 @@ volume_marker_path() {
   printf '%s/.prepared.yaml' "$(l4t_root_path "$@")"
 }
 
+# _volume_marker_parses <marker_path>
+# True iff the marker exists AND yq can parse it. A truncated / half-written
+# marker (e.g. a crash mid-`yq -i` before this code switched to atomic writes,
+# or a manual edit that left invalid YAML) would otherwise make every reader
+# silently see empty fields. Callers that can't parse the marker treat the
+# volume as `mismatch` (advise clean) instead of crashing or resuming blind.
+_volume_marker_parses() {
+  local marker="$1"
+  [[ -f "${marker}" ]] || return 1
+  yq -e '.' "${marker}" >/dev/null 2>&1
+}
+
+# _volume_yq_inplace <marker_path> <yq_expression>
+# Crash-safe replacement for `yq -i <expr> <marker>`: edit a temp file in the
+# SAME directory, then atomically `mv` it over the marker. The same-dir temp
+# keeps the rename a true atomic rename (no cross-filesystem copy), so a crash
+# mid-write can only ever leave the old, complete marker — never a truncated
+# one. Matches `yq -i`'s behaviour on the happy path.
+_volume_yq_inplace() {
+  local marker="$1" expr="$2"
+  local tmp
+  tmp="$(mktemp "${marker}.XXXXXX")" || return 1
+  if yq "${expr}" "${marker}" >"${tmp}" 2>/dev/null; then
+    mv -f "${tmp}" "${marker}"
+  else
+    rm -f "${tmp}"
+    return 1
+  fi
+}
+
 # volume_state <jetpack_version> <hw_targets>
 # Echoes one of: empty | match | mismatch
 volume_state() {
@@ -55,6 +85,15 @@ volume_state() {
       return 0
     fi
     printf 'empty'
+    return 0
+  fi
+
+  # A marker that exists but won't parse (truncated by a pre-atomic-write
+  # crash, or hand-corrupted) can't be trusted to confirm a match — treat it
+  # as a mismatch so the user is advised to clean rather than resuming blind
+  # or crashing on empty `yq` reads downstream.
+  if ! _volume_marker_parses "${marker}"; then
+    printf 'mismatch'
     return 0
   fi
 
@@ -116,7 +155,7 @@ volume_record_phase() {
   marker="$(volume_marker_path "${jp}" "${hw}")"
   volume_init_marker "${jp}" "${hw}"
 
-  yq -i ".phases |= (. + [\"${phase}\"] | unique)" "${marker}"
+  _volume_yq_inplace "${marker}" ".phases |= (. + [\"${phase}\"] | unique)"
 }
 
 # volume_phase_done <jetpack_version> <hw_targets> <phase>
@@ -142,7 +181,7 @@ volume_drop_phase() {
   local marker
   marker="$(volume_marker_path "${jp}" "${hw}")"
   [[ -f "${marker}" ]] || return 0
-  yq -i "del(.phases[] | select(. == \"${phase}\"))" "${marker}"
+  _volume_yq_inplace "${marker}" "del(.phases[] | select(. == \"${phase}\"))"
 }
 
 # volume_record_storage_mode <jetpack_version> <hw_targets> <mode>
@@ -157,7 +196,7 @@ volume_record_storage_mode() {
   local marker
   marker="$(volume_marker_path "${jp}" "${hw}")"
   volume_init_marker "${jp}" "${hw}"
-  yq -i ".storage_mode = \"${mode}\"" "${marker}"
+  _volume_yq_inplace "${marker}" ".storage_mode = \"${mode}\""
 }
 
 # volume_storage_mode <jetpack_version> <hw_targets>

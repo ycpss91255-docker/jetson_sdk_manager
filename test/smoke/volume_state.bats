@@ -85,6 +85,26 @@ setup() {
   assert_output 'mismatch'
 }
 
+@test "volume_state is 'mismatch' on a corrupt (unparseable) marker (#67)" {
+  # A marker that exists but won't parse (e.g. truncated by a pre-atomic-write
+  # crash) must be treated as a mismatch — advise clean rather than crash.
+  local marker
+  marker="$(volume_marker_path "${JP}" "${HW}")"
+  mkdir -p "$(dirname "${marker}")"
+  printf 'jetpack_version: "%s"\n  : : not: valid: yaml: [\n' "${JP}" >"${marker}"
+  run volume_state "${JP}" "${HW}"
+  assert_output 'mismatch'
+}
+
+@test "volume_record_phase leaves no temp file behind (atomic write, #67)" {
+  volume_record_phase "${JP}" "${HW}" "bsp"
+  local dir
+  dir="$(dirname "$(volume_marker_path "${JP}" "${HW}")")"
+  # The same-dir mktemp temp must have been renamed away, not left behind.
+  run bash -c "ls '${dir}'/.prepared.yaml.* 2>/dev/null | wc -l"
+  assert_output '0'
+}
+
 @test "volume_assert_match aborts on mismatch pointing at clean.sh l4t" {
   mkdir -p "$(l4t_root_path "${JP}" "${HW}")"
   touch "$(l4t_root_path "${JP}" "${HW}")/stray-file"
