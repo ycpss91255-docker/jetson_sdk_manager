@@ -48,6 +48,7 @@ _L4T_EXPORT_DIR_OVERRIDDEN="${L4T_EXPORT_DIR+yes}"
 L4T_EXPORT_DIR="${L4T_EXPORT_DIR:-/srv/jetson_l4t}"
 MOUNT_BIN="${MOUNT_BIN:-mount}"
 MOUNTPOINT_BIN="${MOUNTPOINT_BIN:-mountpoint}"
+FINDMNT_BIN="${FINDMNT_BIN:-findmnt}"
 # Where to read volume.sh's canonical export path for the contract check.
 # Overridable so the smoke test can point at a fixture.
 VOLUME_LIB="${VOLUME_LIB:-${_HERE}/lib/volume.sh}"
@@ -83,6 +84,41 @@ _assert_path_contract() {
   fi
 }
 
+# _existing_bind_source <mountpoint> — echo the absolute source path backing an
+# existing mount, or empty if it can't be determined. findmnt renders a bind of
+# a subtree as DEV[/abs/path]; a whole-filesystem mount has no [..] suffix.
+_existing_bind_source() {
+  command -v "${FINDMNT_BIN}" >/dev/null 2>&1 || return 0
+  local src
+  src="$("${FINDMNT_BIN}" -n -o SOURCE "$1" 2>/dev/null)" || return 0
+  case "${src}" in
+    *'['*']') src="${src##*[}"; printf '%s\n' "${src%]}" ;;
+    *)        printf '\n' ;;
+  esac
+}
+
+# _assert_export_bind_matches — when ${L4T_EXPORT_DIR} is ALREADY bind-mounted,
+# make sure it points at THIS repo's data/jetson_l4t and not a stale bind left
+# behind by another clone / working directory (#76). The kernel nfsd resolves
+# the export in the host mount namespace (#52), so a stale bind silently makes
+# the flash serve the WRONG images — the flash still succeeds, masking the
+# mismatch. Abort with a concrete remedy instead of reusing the stale bind.
+_assert_export_bind_matches() {
+  local cur want
+  cur="$(_existing_bind_source "${L4T_EXPORT_DIR}")"
+  [[ -n "${cur}" ]] || return 0   # can't determine the source — leave as-is
+  cur="$(readlink -f "${cur}" 2>/dev/null || printf '%s' "${cur}")"
+  want="$(readlink -f "${L4T_EXPORT_SRC}" 2>/dev/null || printf '%s' "${L4T_EXPORT_SRC}")"
+  [[ "${cur}" == "${want}" ]] && return 0
+  printf '\n\033[31m[host-setup] error:\033[0m %s is already bind-mounted from a different source\n' \
+    "${L4T_EXPORT_DIR}" >&2
+  printf '    existing: %s\n' "${cur}" >&2
+  printf '    expected: %s   (this repo)\n' "${want}" >&2
+  printf '  A stale bind (e.g. from another clone) makes the flash serve the WRONG images, silently.\n' >&2
+  printf '  Clear it, then re-run this script:\n    sudo umount %s\n' "${L4T_EXPORT_DIR}" >&2
+  exit 1
+}
+
 main() {
   _step "1/5 Registering QEMU binfmt (ARM64 emulation for prepare)"
   if command -v "${DOCKER_BIN}" >/dev/null 2>&1; then
@@ -116,7 +152,8 @@ main() {
   mkdir -p "${L4T_EXPORT_SRC}"
   sudo mkdir -p "${L4T_EXPORT_DIR}"
   if "${MOUNTPOINT_BIN}" -q "${L4T_EXPORT_DIR}"; then
-    _ok "${L4T_EXPORT_DIR} already bind-mounted"
+    _assert_export_bind_matches   # reject a stale cross-repo bind (#76)
+    _ok "${L4T_EXPORT_DIR} already bind-mounted from this repo"
   else
     sudo "${MOUNT_BIN}" --bind "${L4T_EXPORT_SRC}" "${L4T_EXPORT_DIR}"
     _ok "${L4T_EXPORT_DIR} → ${L4T_EXPORT_SRC} (bind)"

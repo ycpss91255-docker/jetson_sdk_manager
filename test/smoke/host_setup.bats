@@ -99,6 +99,39 @@ EOF
   [[ ! -s "${MOUNT_LOG}" ]]   # mount never called
 }
 
+@test "host_setup reuses the bind when /srv already points at this repo (#76)" {
+  mkdir -p "${L4T_EXPORT_SRC}"
+  cat >"${STUB_BIN}/mountpoint" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  cat >"${STUB_BIN}/findmnt" <<EOF
+#!/usr/bin/env bash
+printf '/dev/nvme0n1p5[%s]\n' "${L4T_EXPORT_SRC}"
+EOF
+  chmod +x "${STUB_BIN}/mountpoint" "${STUB_BIN}/findmnt"
+  run "${HOST_SETUP}"
+  assert_success
+  assert_output --partial 'already bind-mounted from this repo'
+  [[ ! -s "${MOUNT_LOG}" ]]   # mount never called
+}
+
+@test "host_setup aborts when /srv is bind-mounted from a different repo (#76)" {
+  cat >"${STUB_BIN}/mountpoint" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  cat >"${STUB_BIN}/findmnt" <<'EOF'
+#!/usr/bin/env bash
+printf '/dev/nvme0n1p5[/tmp/other-clone/data/jetson_l4t]\n'
+EOF
+  chmod +x "${STUB_BIN}/mountpoint" "${STUB_BIN}/findmnt"
+  run "${HOST_SETUP}"
+  assert_failure
+  assert_output --partial 'different source'
+  [[ ! -s "${MOUNT_LOG}" ]]   # mount never called
+}
+
 @test "host_setup honors USBFS_MEMORY_MB override" {
   USBFS_MEMORY_MB=4096 run "${HOST_SETUP}"
   assert_success
