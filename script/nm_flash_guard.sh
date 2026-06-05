@@ -60,7 +60,12 @@ enable() {
   _step "Re-enabling NetworkManager control of USB gadget interfaces (normal mode)"
   if [[ -e "${CONF}" ]]; then
     sudo rm -f "${CONF}"
-    _nm_active && _reload || true
+    # Don't mask a real reload failure with `|| true`: if NM is active but the
+    # reload fails, the guard file is gone yet NM never re-reads config, so the
+    # host never DHCPs the booted board — surface it instead of printing "ok".
+    if _nm_active; then
+      _reload || printf '  warning: NetworkManager reload failed — run: sudo nmcli general reload\n' >&2
+    fi
     _ok "Removed ${CONF##*/} — NM will DHCP the booted Jetson usb0 (192.168.55.100)"
   else
     printf '  No guard file present — already in normal mode\n' >&2

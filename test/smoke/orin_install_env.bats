@@ -13,15 +13,15 @@ setup() {
   assert_cmd_installed bash
 }
 
-@test "sdkmanager is installed (inspector stage only)" {
+@test "sdkmanager is installed (sdkm-base / cli / gui stages only)" {
   command -v sdkmanager >/dev/null 2>&1 \
-    || skip "sdkmanager only ships in the inspector stage"
+    || skip "sdkmanager only ships in the sdkm-base / cli / gui stages"
   assert_cmd_installed sdkmanager
 }
 
-@test "sdkmanager is runnable (inspector stage only)" {
+@test "sdkmanager is runnable (sdkm-base / cli / gui stages only)" {
   command -v sdkmanager >/dev/null 2>&1 \
-    || skip "sdkmanager only ships in the inspector stage"
+    || skip "sdkmanager only ships in the sdkm-base / cli / gui stages"
   run sdkmanager --ver
   assert_success
 }
