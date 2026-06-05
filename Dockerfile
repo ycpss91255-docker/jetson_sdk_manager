@@ -132,7 +132,12 @@ RUN apt-get update && \
 # edit) which only the Go version supports. Jammy/Noble apt repos
 # don't ship it, so pin a release and grab the static binary directly.
 ARG YQ_VERSION="v4.44.3"
-ARG TARGETARCH="amd64"
+# TARGETARCH is auto-provided by BuildKit (the build platform's GOARCH:
+# amd64 / arm64). Declared with no default so BuildKit injects it; an
+# explicit default would mask the real target on arm64 builds and pull
+# the wrong yq binary. yq ships linux_amd64 / linux_arm64 assets, which
+# match these values verbatim.
+ARG TARGETARCH
 RUN wget -q "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH}" \
         -O /usr/local/bin/yq && \
     chmod 0755 /usr/local/bin/yq && \
@@ -286,11 +291,23 @@ FROM devel AS sdkm-base
 USER root
 
 ARG DEBIAN_FRONTEND=noninteractive
+# Re-declare so BuildKit's auto TARGETARCH is in scope here (ARG values
+# do not cross the FROM boundary). Used to pick the CUDA repo arch path.
+ARG TARGETARCH
 
+# Map BuildKit's TARGETARCH onto NVIDIA's CUDA apt-repo arch directory:
+#   amd64 -> x86_64, arm64 -> sbsa (the aarch64 server-class repo SDK
+# Manager is published under). Any other arch is a hard build error
+# rather than a silent fetch of the wrong keyring.
 # hadolint ignore=DL4006,SC1091
-RUN . /etc/os-release && \
+RUN case "${TARGETARCH}" in \
+        amd64) CUDA_ARCH="x86_64" ;; \
+        arm64) CUDA_ARCH="sbsa" ;; \
+        *) echo "ERROR: unsupported TARGETARCH '${TARGETARCH}' for CUDA repo arch mapping (expected amd64 or arm64)" >&2; exit 1 ;; \
+    esac && \
+    . /etc/os-release && \
     UBUNTU_VER=$(echo "${VERSION_ID}" | tr -d '.') && \
-    wget -q "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${UBUNTU_VER}/x86_64/cuda-keyring_1.1-1_all.deb" && \
+    wget -q "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${UBUNTU_VER}/${CUDA_ARCH}/cuda-keyring_1.1-1_all.deb" && \
     dpkg -i cuda-keyring_1.1-1_all.deb && \
     rm cuda-keyring_1.1-1_all.deb && \
     apt-get update && \
