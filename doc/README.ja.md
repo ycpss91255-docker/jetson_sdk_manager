@@ -6,18 +6,20 @@
 
 **[English](../README.md)** | **[繁體中文](README.zh-TW.md)** | **[简体中文](README.zh-CN.md)** | **[日本語](README.ja.md)**
 
+> この日本語訳は英語版から翻訳したものです。内容に差異がある場合は英語版（[README.md](../README.md)）が正本です。
+
 ---
 
 ## 目次
 
 - [TL;DR](#tldr)
-- [なぜ SDK Manager ではなくファクトリーフラッシュか](#なぜ-sdk-manager-ではなくファクトリーフラッシュか)
+- [2 つのフラッシュ経路](#2-つのフラッシュ経路)
 - [前提条件](#前提条件)
 - [`jetson.yaml` の設定](#jetsonyaml-の設定)
 - [クイックスタート](#クイックスタート)
 - [Stages](#stages)
 - [Clean コマンド](#clean-コマンド)
-- [Inspector（SDK Manager GUI）](#inspectorsdk-manager-gui)
+- [SDK Manager（cli / gui）](#sdk-managercli--gui)
 - [永続データ](#永続データ)
 - [アーキテクチャ](#アーキテクチャ)
 - [Smoke Tests](#smoke-tests)
@@ -35,32 +37,40 @@ ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # preset を 1 つ選ぶ
 
 make run -- -t prepare    # フェーズ 1：BSP ダウンロード + フラッシュイメージ生成（約 30 分）
 # Jetson を APX recovery に入れる（REC を押しながら RESET をタップ）
+./script/nm_flash_guard.sh auto   # NetworkManager が USB 転送を破壊するのを防ぐ；ボード起動時に自動復帰
 make run -- -t flash      # フェーズ 2：Jetson に書き込み（約 10 分）
 
 # ...または Jetson を APX recovery に入れた状態で、1 コマンドで両フェーズを実行:
-make run -- -t prepare && make run -- -t flash
+make run -- -t prepare && ./script/nm_flash_guard.sh auto && make run -- -t flash
 ```
 
 > `./script/host_setup.sh` は boot ごとの host 前提を一括実行します(見 [前提条件](#前提条件));`make run` は初回に不足している stage image を自動 build します。解説付きの完全な手順——各 stage の `make build`、初回起動後の `nvidia-jetpack` インストール、headless 接続、中断後の再開——は [クイックスタート](#クイックスタート) を参照。
 
-## なぜ SDK Manager ではなくファクトリーフラッシュか
+## 2 つのフラッシュ経路
 
-NVIDIA SDK Manager の GUI / `--cli` フローは、host 上で NFS server を動かし、rootfs を USB device-mode 経由でデバイスへエクスポートし、`iptables` で host のネットワークスタックをブリッジしてフラッシュします。Docker 内（`--privileged --network host` を付けても）この組み合わせは信頼性のある動作になりません：NFS server のバインドが不安定、コンテナ内の `iptables` ルールが host の nftables に届かないことがある、`usb-gadget` device-mode forwarding が失敗する。典型的な症状が、NVIDIA 公式 Docker image でも起きる [Flashing - 99% で停止](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066) です。
+本 repo は Jetson をフラッシュする 2 つの方法を同梱しています。**ファクトリーフラッシュがドキュメント化されたデフォルト**で、SDK Manager は best-effort の代替手段です。
 
-本 repo はこの経路を完全に回避します：**prepare** stage は BSP 同梱の `l4t_initrd_flash.sh --no-flash` で host 側にフラッシュイメージを生成（Jetson 不要、NFS 不要、`iptables` 不要）；**flash** stage は `--flash-only` で書き込みます：Jetson は `tegrarcm_v2` USB 接続で最小限の initrd を起動し、その同じリンク上のローカル NFS エクスポートから image を取得します。このエクスポートには host の `nfsd` カーネルモジュールが必要ですが（[前提条件](#前提条件) 参照）、SDK Manager と違って `iptables` 操作も `usb-gadget` device-mode forwarding も**不要**なので、privileged コンテナ内で安定して動作します。
+| | **ファクトリーフラッシュ**（`prepare` / `flash` / `probe`） | **SDK Manager**（`cli` / `gui`） |
+|---|---|---|
+| ステータス | **デフォルト**、CI でエンドツーエンドにガード | best-effort、**CI でガードされない**（CI は build + `sdkmanager --ver` の smoke のみ） |
+| NVIDIA ログイン | 不要 | **必要**（セッションは `data/nvsdkm` に永続化） |
+| モード | スクリプト可能 / headless / オフラインキャッシュ可能 | 対話的なコンポーネント選択 + host 開発ツール |
+| 仕組み | `tegrarcm_v2` USB リンク上の `l4t_initrd_flash.sh` — device-mode forwarding なし | SDK Manager の NFS + `iptables` + USB device-mode forwarding |
 
-SDK Manager は **`inspector`** stage にカタログブラウザとして残しています。JetPack 各リリースにどの `.deb` パッケージが含まれるかを調べる用途です。その Install ボタンは Docker 内で依然として機能しません；entrypoint がその旨の banner を表示します。
+**prepare** stage は BSP 同梱の `l4t_initrd_flash.sh --no-flash` で host 側にフラッシュイメージを生成（Jetson 不要、NVIDIA ログイン不要）；**flash** stage は `--flash-only` で書き込みます — Jetson は `tegrarcm_v2` USB リンク上で最小限の initrd を起動し、その同じリンク上のローカル NFS エクスポートから image を取得します。これには host の `nfsd` モジュールのロードが必要ですが（[前提条件](#前提条件) 参照）、`iptables` も `usb-gadget` device-mode forwarding も不要です。
+
+**SDK Manager は「Docker 内で壊れている」わけでは _ありません_** — 本 repo はかつてそう主張していましたが、現在は撤回しています。よく知られた [Flashing-99% での停止](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066) は、**host の NetworkManager** が USB gadget リンクを DHCP プローブして破壊していたことが原因で（[#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48)）、[`nm_flash_guard.sh`](script/nm_flash_guard.sh) で修正しました；*「Device mode forwarding host setup failed」* ステップは単に `iptables` + `dnsutils` が欠けていただけで、現在は `sdkm-base` に含まれています。[共有 host 準備](#前提条件)（`host_setup.sh`、`nm_flash_guard.sh auto`）と NVIDIA ログインがあれば、SDK Manager でもフラッシュできます — [SDK Manager（cli / gui）](#sdk-managercli--gui) 参照。ファクトリーフラッシュは、ログイン不要でスクリプト可能 / オフライン対応のため、引き続きデフォルトです。
 
 ## 前提条件
 
 - **Host OS**：x86_64 Linux。
 - **Docker Engine** >= v20.10.6。
-- **repo を置く host のファイルシステムは ext4 / xfs / btrfs であること。** `apply_binaries.sh` は rootfs ツリーに setuid バイナリ（`sudo`）と root 所有のファイルを生成します。NTFS / exFAT / `fuseblk` / FAT は展開時に setuid と ownership を黙って落とすため、フラッシュ後の Jetson は起動後に `sudo` が起動を拒否します。`prepare.sh` は非 unix FS を検出するとアクションメッセージ付きで中止します；repo を ext4 / xfs / btrfs パーティションに移すか、ext4 ディレクトリを `./data/jetson_l4t/` に bind-mount してください。
-- **boot ごとの host セットアップ — `./script/host_setup.sh`。** Jetson を接続する前に host 上で実行。1 コマンドで **QEMU binfmt** を登録（`prepare` で BSP の ARM64 ツールを実行）、**`nfsd`** モジュールをロード（`flash` がローカル NFS エクスポートで payload を Jetson の initrd に渡す —— `iptables` / `usb-gadget` forwarding なし）、**USB オートサスペンド**を無効化、**`usbfs` buffer** を 2048 MB に引き上げ（後の 2 つは `tegrarcm_v2` / NFS の bulk write が途中で止まるのを防止）。これらは再起動でリセットされるため、boot ごとに再実行します。スクリプトが**やらない**こと 2 つ:
+- **repo を置く host のファイルシステムは ext4 / xfs / btrfs であること。** `apply_binaries.sh` は rootfs ツリーに setuid バイナリ（`sudo`）と root 所有のファイルを生成します。NTFS / exFAT / `fuseblk` / FAT は展開時に setuid と ownership を黙って落とすため、フラッシュ後の Jetson は起動後に `sudo` が起動を拒否します。`prepare.sh` は非 unix FS を検出するとアクションメッセージ付きで中止します；repo を ext4 / xfs / btrfs パーティションに移すか、ext4 ディレクトリを `./data/jetson_l4t/` に bind-mount してから再実行してください。
+- **boot ごとの host セットアップ — `./script/host_setup.sh`。** Jetson を接続する前に host 上で実行。1 コマンドで **QEMU binfmt** を登録（`prepare` で BSP の ARM64 ツールを実行）、**`nfsd`** モジュールをロード（`flash` stage がローカル NFS エクスポートで payload を Jetson の initrd に渡す — `iptables` / `usb-gadget` forwarding なし）、**USB オートサスペンド**を無効化、**`usbfs` buffer** を 2048 MB に引き上げ（後の 2 つは `tegrarcm_v2` / NFS の bulk write が途中で止まるのを防止）、そして**フラッシュエクスポートパス `/srv/jetson_l4t` を host の mount namespace にブリッジ**します（カーネル `nfsd` は host namespace からエクスポートを提供しますが、そこにはコンテナ専用の bind mount が無いため）。これらは再起動でリセットされるため、boot ごとに再実行します。スクリプトが**やらない**こと 2 つ:
   - **`nfsd` の永続化**(次回 boot でロード不要にする):`echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`。
   - **per-device オートサスペンド上書き**、特定の port がまだデバイスを park する場合(Jetson が APX に入った後 `lsusb -t` でパスを探す):`echo on | sudo tee /sys/bus/usb/devices/<bus>-<port>/power/control`。
 
-  スキップ時の症状:QEMU なし → `prepare` で `chroot: ... Exec format error`;`nfsd` なし → `flash` で `RPC: Program not registered` / `Return value 114`。`prepare` は QEMU のステップだけが必要です。
+  スキップ時の症状:QEMU なし → `prepare` で `chroot: ... Exec format error`;`nfsd` なし → `flash` で `RPC: Program not registered` / `Return value 114`;`/srv/jetson_l4t` ブリッジなし → Jetson の initrd の `mount.nfs` が `No such file or directory` で失敗。`prepare` は QEMU のステップだけが必要です。
 - **Jetson が APX recovery に入っていること**（`flash` stage のみ；`prepare` は Jetson 接続不要）。
 
 ## `jetson.yaml` の設定
@@ -86,9 +96,9 @@ ln -sf config/jetson/orin-nx-nvme.yaml jetson.yaml
 
 - `jetpack.version` — `config/jetson/_l4t_mapping.yaml` 経由で L4T release バージョン + BSP / rootfs ダウンロード URL に解決されます。
 - `hardware.board` — alias が NVIDIA の `--target` 名にマップされます。
-- `storage.device` — alias が storage mode（eMMC は `internal`、NVMe / USB / SD は `external`）と、external mode で Jetson recovery initrd が見るデフォルトの kernel device パスにマップされます。
+- `storage.device` — alias が storage mode（eMMC は `internal`、NVMe / USB / SD は `external`）と、Jetson recovery initrd が書き込みを指示されるデフォルトの kernel device パスにマップされます。
 - `user.{username,password,hostname,autologin}` — `l4t_create_default_user.sh` でデフォルト user を事前作成し、初回起動の OEM-config をスキップします。
-- `network`（任意）— デフォルトは DHCP；`method: static` を設定すると rootfs に `NetworkManager` system-connection profile をインストールします。
+- `network`（任意）— デフォルトは DHCP；`method: static` を設定すると `NetworkManager` system-connection profile をインストールします。
 
 **マルチスロット USB リーダー / 非デフォルトの device 番号。** USB SSD や microSD リーダーが非デフォルトの LUN に出る場合（典型的には空スロットが `sda` として enumerate され、カードが `sdb` に来る）、`storage.device_path` を追加して alias 解決の kernel device を上書きします：
 
@@ -98,15 +108,15 @@ storage:
   device_path: sdb1      # usb alias デフォルトの sda1 を上書き
 ```
 
-正しい device_path の見つけ方：先にストレージを host に接続して `lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN` を実行。Jetson recovery initrd の enumeration は多くの場合 host と一致します。初回フラッシュが `Error opening /dev/sd*: No medium found` で中止する場合は、次の文字を試します（`sdb1` → `sdc1`）— [トラブルシューティング](#error-error-opening-devsda-no-medium-foundmicrosd-usb-リーダー経由) 参照。`device_path` を `storage.device: emmc`（internal mode）と同時に設定すると、検証段階で拒否されます。
+正しい値の見つけ方：先にストレージを host に接続して `lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN` を実行。Jetson recovery initrd の enumeration は多くの場合 host と一致します。初回フラッシュが `Error opening /dev/sd*: No medium found` で中止する場合は、次の文字を試します（`sdb1` → `sdc1`）— [トラブルシューティング](#error-error-opening-devsda-no-medium-foundmicrosd-usb-リーダー経由) 参照。`device_path` を `storage.device: emmc`（internal mode）と同時に設定すると、検証段階で拒否されます。
 
 完全なスキーマとコメントは `config/jetson/_example.yaml` を参照。
 
-**JetPack バージョンを追加するには**：`config/jetson/_l4t_mapping.yaml` を編集し、`jetpack_to_l4t` の下に項目を追加（[Jetson Linux Archive](https://developer.nvidia.com/embedded/jetson-linux-archive) から `l4t_release` と `bsp_url` / `rootfs_url` を取得）して、prepare / flash image を再 build します。
+**JetPack バージョンを追加するには**（preset がまだ対応していない場合）：`config/jetson/_l4t_mapping.yaml` を編集し、`jetpack_to_l4t` の下に項目を追加（[Jetson Linux Archive](https://developer.nvidia.com/embedded/jetson-linux-archive) から `l4t_release` と `bsp_url` / `rootfs_url` を取得）して、prepare / flash image を再 build します。
 
 ## クイックスタート
 
-> **`make run` の前に：** boot ごとに `./script/host_setup.sh` を 1 回実行（QEMU binfmt、`nfsd`、USB 調整 —— [前提条件](#前提条件) 参照）、初回は `./script/init_data_dirs.sh` も実行（さもないと Docker daemon が `data/` マウント点を root で作成し、コンテナ内の非 root ユーザーがアクセスできなくなります）。
+> **`make run` の前に：** boot ごとに `./script/host_setup.sh` を 1 回実行（QEMU binfmt、`nfsd`、USB 調整 — [前提条件](#前提条件) 参照）、初回は `./script/init_data_dirs.sh` も実行（さもないと Docker daemon が `data/` マウント点を root で作成し、コンテナ内の非 root ユーザーがアクセスできなくなります）。
 
 ```bash
 ./script/host_setup.sh      # boot ごとに 1 回:QEMU binfmt + nfsd + USB 調整(host 上で実行)
@@ -121,9 +131,12 @@ make run -- -t prepare
 # Jetson を APX recovery に：電源オフ、REC を押しながら、電源を再接続、離す。
 make build -- -t probe   # 一度に build できる stage は 1 つ（最後の -t が有効）、分けて build
 make build -- -t flash
-make run -- -t probe     # Jetson が APX にあるか確認 (exit 0 = ready to flash)
+make run -- -t probe     # Jetson が APX にあるか確認（成功時 exit 0）
+./script/nm_flash_guard.sh auto   # 下の「NetworkManager」の注記参照
 make run -- -t flash
 ```
+
+NetworkManager を実行している host（ほとんどのラップトップ / デスクトップ）では、フラッシュが途中で停止し、紛らわしい `NFS server` / `Error 114` 失敗になることがあります：NM が Jetson の USB gadget インターフェースを DHCP しようとしてタイムアウトし、転送の途中でアドレスを削除するためです。`./script/nm_flash_guard.sh auto` はフラッシュの間そのインターフェースを unmanaged にマークし、その後**ボードが起動デバイス（`0955:7020`）として再 enumerate された瞬間に NM を自動で再有効化**します — host はすぐに `192.168.55.x` を取得し、手動の `enable` ステップなしで SSH できます。タイムアウト（デフォルト 1800 秒、第 1 引数で上書き可）により、フラッシュが中止しても NM が復元されます。`disable` / `enable` / `around` / `status` サブコマンドは [`nm_flash_guard.sh`](script/nm_flash_guard.sh) を参照。
 
 Jetson が新しくフラッシュした OS で起動したら、NVIDIA の OTA apt repository から残りの JetPack コンポーネントをインストール：
 
@@ -157,8 +170,11 @@ host 側は USB ネットワークインターフェースに `192.168.55.x` を
 | `prepare` | フェーズ 1 — BSP + sample rootfs ダウンロード、`apply_binaries.sh`、`l4t_create_default_user.sh`、`l4t_initrd_flash --no-flash`。 | いいえ |
 | `flash` | フェーズ 2 — `l4t_initrd_flash --flash-only`。 | **はい**、APX recovery |
 | `probe` | 診断。USB をスキャンして NVIDIA vendor `0955` を探し、各デバイスが recovery 範囲にあるか注記し、APX の Jetson が無ければ exit 非 0。flash 前に接続確認のため実行でき、フラッシュ全体を走らせる必要がありません。 | 推奨 |
-| `inspector` | SDK Manager GUI、JetPack コンポーネントカタログの閲覧用。Install ボタンは Docker 内で機能しません — [Inspector](#inspectorsdk-manager-gui) 参照。 | いいえ |
-| `inspector-test` | `sdkmanager --ver` の sanity check。CI のみ。 | いいえ |
+| `sdkm-base` | `cli` / `gui` 共通の SDK Manager レイヤー（`sdkmanager` + `iptables` + `dnsutils`）。直接実行しません。`devel` を slim に保ちます。 | いいえ |
+| `cli` | SDK Manager **headless CLI** — best-effort な代替フラッシュ経路（`sdkmanager --cli`）。ファクトリーの `prepare`/`flash` stage が引き続きサポート対象のデフォルトです。 | フラッシュ時 |
+| `cli-test` | `sdkmanager --ver` の sanity check。CI のみ。 | いいえ |
+| `gui` | SDK Manager **GUI** — best-effort フラッシュ + JetPack カタログブラウザ。[SDK Manager（cli / gui）](#sdk-managercli--gui) 参照。 | フラッシュ時 |
+| `gui-test` | `sdkmanager --ver` の sanity check。CI のみ。 | いいえ |
 
 ## Clean コマンド
 
@@ -173,16 +189,16 @@ host 側は USB ネットワークインターフェースに `192.168.55.x` を
 
 `prepare.sh` が JetPack バージョンの mismatch を報告したら、`./script/clean.sh l4t` でリセットします。
 
-## Inspector（SDK Manager GUI）
+## SDK Manager（cli / gui）
 
-`inspector` stage は NVIDIA SDK Manager を含みますが、用途は**カタログブラウザ**でありフラッシュツールではありません。JetPack 各バージョンにどの `.deb` パッケージが含まれるか調べたり、`apt install nvidia-jetpack` を実行せずに個別の `.deb` をダウンロードしたりできます。
+ファクトリーの `prepare` / `flash` stage がサポート対象のデフォルトです。SDK Manager は、NVIDIA 自身のツールを使いたい、または JetPack の `.deb` カタログを閲覧したいユーザー向けに、2 つの **best-effort** stage として同梱されています：`cli`（`sdkmanager --cli`）と `gui`（グラフィカルクライアント）。どちらも `sdkm-base` 上に構築されており、SDK Manager の Docker 内 device-mode forwarding に必要な `iptables` + `dnsutils` を追加します。
 
 ```bash
-make build -- -t inspector
-make run -- -t inspector
+make build -- -t gui    # または: -t cli
+make run -- -t gui      # または: -t cli
 ```
 
-entrypoint は Install ボタンが Docker 内でなぜ機能しないかの banner を表示し、対話モードでは GUI 起動前に Enter 待ちします。`sdkmanager-gui` へ引数を渡す場合は `make run` の位置引数で渡します。
+best-effort とは：CI が stage を build し `sdkmanager --ver` を smoke しますが、実際の SDK Manager フラッシュは手動で、NVIDIA の upstream に伴いずれる可能性があるという意味です。GUI/CLI フラッシュを成功させるには、まずファクトリー経路と同じ host 前提をセットアップし（`./script/host_setup.sh` と `./script/nm_flash_guard.sh auto`）、NVIDIA Developer アカウントでサインインします。`gui` の entrypoint はこれらのステップを示す banner を表示し、（対話モードでは）起動前に Enter を待ちます；`-t gui` の後に続く余分な位置引数は（`--no-sandbox` の後で）`sdkmanager-gui` に転送されます。GUI モードは host の X11 セッションが必要です（base template が自動転送）。
 
 GUI モードは host の X11 セッションが必要です；base template が `$DISPLAY` を自動検出し、X11 socket と `XAUTHORITY` を転送します。
 
@@ -194,9 +210,9 @@ GUI モードは host の X11 セッションが必要です；base template が
 |---|---|---|
 | `./data/jetson_l4t/` | `/srv/jetson_l4t` | BSP + rootfs + 生成されたフラッシュイメージ（ファクトリーフラッシュ）。**ext4 / xfs / btrfs であること。** |
 | `./data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | キャッシュした tarball（BSP + sample rootfs）、SDK Manager と共用。 |
-| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager ログインセッションキャッシュ。inspector stage のみ。 |
-| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager 管理の SDK インストールフォルダ。inspector stage のみ。 |
-| `./jetson.yaml` | `/etc/jetson.yaml`（読み取り専用） | ユーザー設定、`prepare.sh` / `flash.sh` / `inspector-entrypoint.sh` が読み取り。 |
+| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager ログインセッションキャッシュ。`cli` / `gui` stage のみ。 |
+| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager 管理の SDK インストールフォルダ。`cli` / `gui` stage のみ。 |
+| `./jetson.yaml` | `/etc/jetson.yaml`（読み取り専用） | ユーザー設定、`prepare.sh` / `flash.sh` / `gui-entrypoint.sh` が読み取り。 |
 
 ## アーキテクチャ
 
@@ -215,12 +231,15 @@ graph TD
     EXT3 --> prepare
     devel --> flash["flash\nCMD flash.sh\n(USB write to Jetson)"]
     devel --> probe["probe\nCMD probe.sh\n(lsusb 0955 sanity check)"]
-    devel --> inspector["inspector\n+ SDK Manager + X11 libs\nCMD inspector-entrypoint.sh"]
-    EXT4 --> inspector
+    devel --> sdkm-base["sdkm-base\n+ SDK Manager + iptables + dnsutils"]
+    EXT4 --> sdkm-base
+    sdkm-base --> cli["cli\nCMD sdkmanager --cli\n(best-effort flash path)"]
+    sdkm-base --> gui["gui\n+ X11 libs\nCMD gui-entrypoint.sh"]
 
     EXT1 --> devel-test["devel-test (ephemeral)\nshellcheck + hadolint + bats"]
     devel --> devel-test
-    inspector --> inspector-test["inspector-test (ephemeral)\nsdkmanager --ver"]
+    gui --> gui-test["gui-test (ephemeral)\nsdkmanager --ver"]
+    cli --> cli-test["cli-test (ephemeral)\nsdkmanager --ver"]
 ```
 
 ## Smoke Tests
@@ -231,7 +250,7 @@ graph TD
 make build test
 ```
 
-`devel-test` stage は `devel` image に対して bats テストを実行します；2 つの `sdkmanager` アサーションはここでは skip されます（`inspector` image 内で bats を再実行したときのみ実行）。
+`devel-test` stage は `devel` image に対して bats テストを実行します；2 つの `sdkmanager` アサーションはここでは skip されます（`cli` / `gui` image 内で bats を再実行したときのみ実行）。
 
 ## ディレクトリ構成
 
@@ -239,21 +258,21 @@ make build test
 jetson_sdk_manager/
 ├── jetson.yaml -> config/jetson/agx-orin-emmc.yaml   # symlink；preset 切り替え
 ├── compose.yaml                 # Docker Compose（派生、gitignored）
-├── Dockerfile                   # sys → devel-base → devel → {prepare, flash, inspector}
+├── Dockerfile                   # sys → devel-base → devel → {prepare, flash, probe, sdkm-base → cli/gui}
 ├── Makefile -> .base/script/docker/Makefile
 ├── .base/                       # 共有テンプレート（git subtree）
 ├── data/                        # 永続状態（gitignored）
 │   ├── jetson_l4t/              #   BSP + rootfs + フラッシュイメージ
 │   ├── downloads/               #   BSP / rootfs tarball
-│   ├── nvsdkm/                  #   SDK Manager ログインセッション（inspector）
-│   └── nvidia_sdk/              #   SDK Manager インストールフォルダ（inspector）
+│   ├── nvsdkm/                  #   SDK Manager ログインセッション（cli/gui）
+│   └── nvidia_sdk/              #   SDK Manager インストールフォルダ（cli/gui）
 ├── config/
 │   ├── docker/setup.conf        # ランタイム設定 — source of truth
 │   ├── jetson/                  # フラッシュ preset と schema
 │   │   ├── _example.yaml        #   コメント付き canonical schema
 │   │   ├── _l4t_mapping.yaml    #   JetPack → L4T release / URL（build-time）
 │   │   └── *.yaml               #   board / storage ごとの preset
-│   └── packages/                # inspector の X11 lib リスト（Ubuntu codename ごと）
+│   └── packages/                # gui stage の X11 lib リスト（Ubuntu codename ごと）
 ├── doc/
 │   ├── adr/                     # アーキテクチャ決定記録
 │   ├── changelog/CHANGELOG.md
@@ -266,7 +285,7 @@ jetson_sdk_manager/
 │   ├── prepare.sh               # フェーズ 1 entrypoint
 │   ├── flash.sh                 # フェーズ 2 entrypoint
 │   ├── clean.sh                 # Volume クリーンアップコマンド
-│   ├── inspector-entrypoint.sh  # SDK Manager GUI ランチャー + 警告 banner
+│   ├── gui-entrypoint.sh        # SDK Manager GUI ランチャー + best-effort banner
 │   ├── lib/                     # yaml / download / volume / errors helpers
 │   ├── host_setup.sh            # 一括 per-boot host 前提(qemu/nfsd/USB)
 │   ├── init_data_dirs.sh        # 初回に非 root で data/ を作成
@@ -332,7 +351,7 @@ boot ごとに 1 回実行。
 
 ### `Could not detect a board` / Jetson が recovery に入っていない
 
-`flash.sh` は `lsusb` に NVIDIA VID `0955` + recovery PID（`7023` / `7223` / `7423` / `7523` / `7e19`）が出るか確認し、無ければ中止します。`probe` stage を単独で実行すると同じ確認ができます — 別のケーブル / port を試すときに毎回フラッシュ全体を走らせる必要がありません：
+`flash.sh` は `lsusb` に NVIDIA VID `0955` + recovery PID（`7023` / `7223` / `7423` / `7523` / `7e19`）が出るか確認し、無ければ中止します。`probe` stage を単独で実行すると同じ確認ができます — 別のケーブル / port を試すときに毎回 prepare stage の状態を失わずに済みます：
 
 ```bash
 make run -- -t probe
@@ -381,6 +400,14 @@ make run -- -t flash
 ```
 
 `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf` で再起動後も有効にできます。[前提条件](#前提条件) 参照。`flash.sh` は現在これを事前チェックし、同じ案内付きで早期に中止します。
+
+### フラッシュが転送途中で停止 / 「Flashing - 99%」 / `mount.nfs: No such file or directory`
+
+コンテナ内フラッシュ（どちらの経路でも）が途中で停止するのは、ほぼ常に **host の NetworkManager** が Jetson の USB gadget インターフェースを DHCP プローブし、タイムアウトして、転送の途中でアドレスを削除していることが原因です — [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48) で突き止めた根本原因です。フラッシュ前に `./script/nm_flash_guard.sh auto` を実行してください（インターフェースを unmanaged にマークし、ボード起動時に NM を再有効化します）。代わりに `mount.nfs: ... No such file or directory` が出る場合は、host の `/srv/jetson_l4t` ブリッジが欠けています — `./script/host_setup.sh` がそれをセットアップします（step 5/5）。
+
+### SDK Manager：「Device mode forwarding host setup failed」
+
+これは Docker の根本的な制約では**ありません**（以前の README はそう主張していましたが、それは誤りでした）。SDK Manager の `device_mode_host_setup.sh` は `iptables`（NAT MASQUERADE）と `dig`（DNS 到達性プローブ）を必要とします；どちらも現在は `sdkm-base` レイヤーに含まれているため、`cli` / `gui` stage はこのステップをクリアします。それでも失敗する場合は、`./script/host_setup.sh` + `./script/nm_flash_guard.sh auto` を実行したか、NVIDIA Developer アカウントでサインインしているかを確認してください。詳細：[#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48)。
 
 ### `ERROR: might be timeout in USB write` / `Return value 3`
 

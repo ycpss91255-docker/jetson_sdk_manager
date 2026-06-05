@@ -11,13 +11,13 @@
 ## 目錄
 
 - [TL;DR](#tldr)
-- [為什麼用工廠燒錄而非 SDK Manager](#為什麼用工廠燒錄而非-sdk-manager)
+- [兩條燒錄路徑](#兩條燒錄路徑)
 - [前置需求](#前置需求)
 - [設定 `jetson.yaml`](#設定-jetsonyaml)
 - [快速開始](#快速開始)
 - [Stages](#stages)
 - [Clean 指令](#clean-指令)
-- [Inspector（SDK Manager GUI）](#inspectorsdk-manager-gui)
+- [SDK Manager（cli / gui）](#sdk-managercli--gui)
 - [持久化資料](#持久化資料)
 - [架構](#架構)
 - [Smoke Tests](#smoke-tests)
@@ -35,32 +35,40 @@ ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # 選一個 preset
 
 make run -- -t prepare    # 階段 1：下載 BSP + 產生燒錄 image（約 30 分鐘）
 # 將 Jetson 進入 APX recovery（按住 REC + 點 RESET）
+./script/nm_flash_guard.sh auto   # 防止 NetworkManager 拆掉 USB 傳輸;板子開機後自動還原
 make run -- -t flash      # 階段 2：寫入 Jetson（約 10 分鐘）
 
 # ...或在 Jetson 已進入 APX recovery 的情況下,一條指令跑完兩階段:
-make run -- -t prepare && make run -- -t flash
+make run -- -t prepare && ./script/nm_flash_guard.sh auto && make run -- -t flash
 ```
 
 > `./script/host_setup.sh` 一次跑完每次開機要做的 host 前置(見 [前置需求](#前置需求));`make run` 首次會自動 build 缺少的 stage image。想看有解說的完整流程——各 stage 的 `make build`、首次開機裝 `nvidia-jetpack`、headless 連線、中斷續跑——見 [快速開始](#快速開始)。
 
-## 為什麼用工廠燒錄而非 SDK Manager
+## 兩條燒錄路徑
 
-NVIDIA SDK Manager 的 GUI 與 `--cli` 流程，是透過在 host 上跑 NFS server、將 rootfs 經由 USB device-mode 匯出至裝置，並使用 `iptables` 橋接 host 網路堆疊來完成燒錄。在 Docker 內（即使加上 `--privileged --network host`）這個組合無法可靠運作：NFS server 綁定不穩、容器內 `iptables` 規則不一定能影響 host nftables、`usb-gadget` device-mode forwarding 失敗。典型症狀就是 [Flashing - 99% 卡死](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066)，NVIDIA 官方 Docker image 也有同樣問題。
+本 repo 提供兩種燒錄 Jetson 的方式。**工廠燒錄是文件記載的預設路徑**；SDK Manager 則是 best-effort 的替代方案。
 
-本 repo 直接繞過此路徑：**prepare** stage 使用 BSP 自帶的 `l4t_initrd_flash.sh --no-flash` 於 host 端產生燒錄 image（不需 Jetson、不需 NFS、不需 `iptables`）；**flash** stage 以 `--flash-only` 寫入：Jetson 透過 `tegrarcm_v2` USB 連線開機進一個精簡 initrd,再從這條鏈路上的本地 NFS export 拉取 image。這個 export 仍需 host 載入 `nfsd` kernel 模組(見 [前置需求](#前置需求)),但與 SDK Manager 不同的是**不需** `iptables` 操作、**不需** `usb-gadget` device-mode forwarding,所以在 privileged 容器內能穩定運作。
+| | **工廠燒錄**（`prepare` / `flash` / `probe`） | **SDK Manager**（`cli` / `gui`） |
+|---|---|---|
+| 狀態 | **預設**，端到端皆有 CI 保護 | Best-effort，**無 CI 保護**（CI 只 build + smoke `sdkmanager --ver`） |
+| NVIDIA 登入 | 不需要 | **需要**（session 持久化於 `data/nvsdkm`） |
+| 模式 | 可腳本化 / headless / 可離線快取 | 互動式元件挑選 + host 開發工具 |
+| 機制 | 透過 `tegrarcm_v2` USB 連線跑 `l4t_initrd_flash.sh` —— 無 device-mode forwarding | SDK Manager 的 NFS + `iptables` + USB device-mode forwarding |
 
-SDK Manager 仍保留於 **`inspector`** stage，用途是瀏覽 JetPack 的元件目錄、查詢有哪些 `.deb` 套件。其 Install 按鈕在 Docker 內仍然失效；entrypoint 會印 banner 提醒這點。
+**prepare** stage 使用 BSP 自帶的 `l4t_initrd_flash.sh --no-flash` 於 host 端產生燒錄 image（不需 Jetson、不需 NVIDIA 登入）;**flash** stage 以 `--flash-only` 寫入 —— Jetson 透過 `tegrarcm_v2` USB 連線開機進一個精簡 initrd,再從這條鏈路上的本地 NFS export 拉取 image。這需要 host 載入 `nfsd` 模組(見 [前置需求](#前置需求)),但**不需** `iptables` 或 `usb-gadget` device-mode forwarding。
+
+**SDK Manager 並_不是_「在 Docker 內壞掉」** —— 這是本 repo 早先的說法、現已撤回。眾所周知的 [Flashing-99% 卡死](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066) 其實是 **host 的 NetworkManager** 對 USB gadget 鏈路做 DHCP 探測並把它拆掉所致（[#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48)），已由 [`nm_flash_guard.sh`](script/nm_flash_guard.sh) 修正;而 *"Device mode forwarding host setup failed"* 那一步只是缺了 `iptables` + `dnsutils`，現已收進 `sdkm-base`。搭配 [共用的 host 前置](#前置需求)（`host_setup.sh`、`nm_flash_guard.sh auto`）並登入 NVIDIA 帳號後，SDK Manager 即可燒錄 —— 見 [SDK Manager（cli / gui）](#sdk-managercli--gui)。工廠燒錄之所以仍是預設,是因為它不需登入且可腳本化 / 可離線。
 
 ## 前置需求
 
 - **Host OS**：x86_64 Linux。
 - **Docker Engine** >= v20.10.6。
 - **Repo 所在的 host 檔案系統須為 ext4 / xfs / btrfs。** `apply_binaries.sh` 會在 rootfs 樹中產生 setuid binary（`sudo`）和 root 擁有的檔案。NTFS / exFAT / `fuseblk` / FAT 會在解壓時靜默丟掉 setuid 與 ownership，燒錄完成的 Jetson 開機後 `sudo` 拒絕啟動。`prepare.sh` 偵測到非 unix FS 會以 action 訊息中止；請將 repo 移到 ext4 / xfs / btrfs 分割區，或 bind-mount 一個 ext4 目錄覆蓋 `./data/jetson_l4t/`。
-- **每次開機的 host 設定 — `./script/host_setup.sh`。** 在連接 Jetson 前於 host 上執行。一條指令會註冊 **QEMU binfmt**(`prepare` 跑 BSP 的 ARM64 工具)、載入 **`nfsd`** 模組(`flash` 透過本地 NFS export 把 payload 餵給 Jetson 的 initrd —— 無 `iptables` / `usb-gadget` forwarding)、關閉 **USB autosuspend**、把 **`usbfs` buffer** 拉到 2048 MB(後兩者避免 `tegrarcm_v2` / NFS bulk write 燒到一半卡住)。這些重開機後都會重置,所以每次開機要再跑一次。兩件它**不會**幫你做的:
+- **每次開機的 host 設定 — `./script/host_setup.sh`。** 在連接 Jetson 前於 host 上執行。一條指令會註冊 **QEMU binfmt**(`prepare` 跑 BSP 的 ARM64 工具)、載入 **`nfsd`** 模組(`flash` 透過本地 NFS export 把 payload 餵給 Jetson 的 initrd —— 無 `iptables` / `usb-gadget` forwarding)、關閉 **USB autosuspend**、把 **`usbfs` buffer** 拉到 2048 MB(後兩者避免 `tegrarcm_v2` / NFS bulk write 燒到一半卡住)、並**把燒錄 export 路徑 `/srv/jetson_l4t` 橋接進 host mount namespace**(kernel `nfsd` 從 host namespace 提供此 export,而僅存在於容器內的 bind mount 在那裡原本不可見)。這些重開機後都會重置,所以每次開機要再跑一次。兩件它**不會**幫你做的:
   - **持久化 `nfsd`**(下次開機免再載):`echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`。
   - **per-device autosuspend 覆寫**,若某個 port 仍把裝置 park(Jetson 進 APX 後用 `lsusb -t` 找路徑):`echo on | sudo tee /sys/bus/usb/devices/<bus>-<port>/power/control`。
 
-  漏跑的症狀:沒 QEMU → `prepare` 出現 `chroot: ... Exec format error`;沒 `nfsd` → `flash` 出現 `RPC: Program not registered` / `Return value 114`。`prepare` 只需要 QEMU 那一步。
+  漏跑的症狀:沒 QEMU → `prepare` 出現 `chroot: ... Exec format error`;沒 `nfsd` → `flash` 出現 `RPC: Program not registered` / `Return value 114`;沒做 `/srv/jetson_l4t` 橋接 → Jetson 的 initrd `mount.nfs` 失敗並出現 `No such file or directory`。`prepare` 只需要 QEMU 那一步。
 - **Jetson 進入 APX recovery**（僅 `flash` 階段需要；`prepare` 不需連 Jetson）。
 
 ## 設定 `jetson.yaml`
@@ -86,9 +94,9 @@ ln -sf config/jetson/orin-nx-nvme.yaml jetson.yaml
 
 - `jetpack.version` — 透過 `config/jetson/_l4t_mapping.yaml` 解析為 L4T release 版本及 BSP / rootfs 下載 URL。
 - `hardware.board` — alias 對應到 NVIDIA `--target` 名稱。
-- `storage.device` — alias 對應到 storage mode（eMMC 為 `internal`，NVMe / USB / SD 為 `external`）以及 external mode 下 Jetson recovery initrd 看到的預設 kernel device 路徑。
+- `storage.device` — alias 對應到 storage mode（eMMC 為 `internal`，NVMe / USB / SD 為 `external`）以及 Jetson recovery initrd 被告知寫入的預設 kernel device 路徑。
 - `user.{username,password,hostname,autologin}` — 透過 `l4t_create_default_user.sh` 預先建立預設 user，首次開機跳過 OEM-config。
-- `network`（選用）— 預設 DHCP；設定 `method: static` 會在 rootfs 內安裝 `NetworkManager` system-connection profile。
+- `network`（選用）— 預設 DHCP；設定 `method: static` 會安裝一份 `NetworkManager` system-connection profile。
 
 **多卡槽 USB reader / 非預設 device 編號。** USB SSD 或 microSD reader 在非預設 LUN 上曝出（典型是空卡槽 enumerate 為 `sda`，卡實際落在 `sdb`）時，加上 `storage.device_path` 覆蓋 alias 解析出的 kernel device：
 
@@ -122,8 +130,11 @@ make run -- -t prepare
 make build -- -t probe   # 一次只能 build 一個 stage（最後的 -t 生效），分開 build
 make build -- -t flash
 make run -- -t probe     # 確認 Jetson 在 APX (exit 0 = ready to flash)
+./script/nm_flash_guard.sh auto   # 見下方「NetworkManager」說明
 make run -- -t flash
 ```
+
+在跑 NetworkManager 的 host 上（多數筆電 / 桌機），燒錄可能在中途以一個誤導性的 `NFS server` / `Error 114` 失敗卡住：NM 試圖對 Jetson 的 USB gadget 介面做 DHCP、逾時，並在傳輸途中移除位址。`./script/nm_flash_guard.sh auto` 會在燒錄期間把該介面標記為 unmanaged，接著**在板子以已開機裝置（`0955:7020`）重新 enumerate 的那一刻自動重新啟用 NM** —— host 隨即取得 `192.168.55.x`，你就能 SSH 進去，無需手動 `enable`。即使燒錄中止，一個 timeout（預設 1800 秒，可用第一個參數覆寫）也會還原 NM。`disable` / `enable` / `around` / `status` 等子指令見 [`nm_flash_guard.sh`](script/nm_flash_guard.sh)。
 
 Jetson 從新燒錄的 OS 開機後，從 NVIDIA OTA apt repository 安裝 JetPack 其他元件：
 
@@ -142,7 +153,7 @@ sudo apt install -y nvidia-jetpack
 ssh <username>@192.168.55.1     # 帳號 / 密碼來自 jetson.yaml 的 user.* 區塊
 ```
 
-Host 端會自動在 USB 網路介面配上 `192.168.55.x`（用 `ip a` 確認）。這條鏈路與選用的 [`network:`](#設定-jetsonyaml) 區塊（設定 Jetson 的乙太 / Wi-Fi，走 NetworkManager）互相獨立、可並存。`192.168.55.1` 是 L4T 內建寫死的，無法從本 repo 更改。
+Host 端會自動在 USB 網路介面配上 `192.168.55.x`（用 `ip a` 確認）。這條鏈路與選用的 [`network:`](#設定-jetsonyaml) 區塊（透過 NetworkManager 設定 Jetson 的乙太 / Wi-Fi）互相獨立、可並存。`192.168.55.1` 是 L4T 內建寫死的，無法從本 repo 更改。
 
 ### 中斷後續跑
 
@@ -157,8 +168,11 @@ Host 端會自動在 USB 網路介面配上 `192.168.55.x`（用 `ip a` 確認�
 | `prepare` | 階段 1 — 下載 BSP + sample rootfs、`apply_binaries.sh`、`l4t_create_default_user.sh`、`l4t_initrd_flash --no-flash`。 | 否 |
 | `flash` | 階段 2 — `l4t_initrd_flash --flash-only`。 | **是**，APX recovery |
 | `probe` | 診斷。掃 USB 找 NVIDIA vendor `0955`，標註每個裝置是否在 recovery 範圍，沒有 Jetson 在 APX 時 exit 非 0。flash 前跑一下確認連線, 不用承擔整個 flash 流程。 | 建議 |
-| `inspector` | SDK Manager GUI，用於瀏覽 JetPack 元件目錄。Install 按鈕在 Docker 內無作用 — 見 [Inspector](#inspectorsdk-manager-gui)。 | 否 |
-| `inspector-test` | `sdkmanager --ver` sanity check。僅 CI。 | 否 |
+| `sdkm-base` | `cli` / `gui` 共用的 SDK Manager 層（`sdkmanager` + `iptables` + `dnsutils`）。不直接執行。讓 `devel` 保持精簡。 | 否 |
+| `cli` | SDK Manager **headless CLI** —— best-effort 的替代燒錄路徑（`sdkmanager --cli`）。工廠 `prepare`/`flash` stage 仍是受支援的預設。 | 燒錄時需要 |
+| `cli-test` | `sdkmanager --ver` sanity check。僅 CI。 | 否 |
+| `gui` | SDK Manager **GUI** —— best-effort 燒錄 + JetPack 目錄瀏覽器。見 [SDK Manager（cli / gui）](#sdk-managercli--gui)。 | 燒錄時需要 |
+| `gui-test` | `sdkmanager --ver` sanity check。僅 CI。 | 否 |
 
 ## Clean 指令
 
@@ -173,16 +187,16 @@ Host 端會自動在 USB 網路介面配上 `192.168.55.x`（用 `ip a` 確認�
 
 當 `prepare.sh` 報 JetPack 版本 mismatch 時，執行 `./script/clean.sh l4t` 重置。
 
-## Inspector（SDK Manager GUI）
+## SDK Manager（cli / gui）
 
-`inspector` stage 內含 NVIDIA SDK Manager，但用途是**目錄瀏覽器**，不是燒錄工具。可查 JetPack 各版本含哪些 `.deb` 套件，或在不執行 `apt install nvidia-jetpack` 的情況下單獨下載某個 `.deb`。
+工廠 `prepare` / `flash` stage 是受支援的預設。SDK Manager 以兩個 **best-effort** stage 提供給偏好 NVIDIA 自家工具、或想瀏覽 JetPack `.deb` 目錄的使用者：`cli`（`sdkmanager --cli`）與 `gui`（圖形化客戶端）。兩者都建構於 `sdkm-base` 之上，後者補上 SDK Manager 在 Docker 內做 device-mode forwarding 所需的 `iptables` + `dnsutils`。
 
 ```bash
-make build -- -t inspector
-make run -- -t inspector
+make build -- -t gui    # 或：-t cli
+make run -- -t gui      # 或：-t cli
 ```
 
-Entrypoint 印出 banner 說明 Install 按鈕為何在 Docker 內失效，互動模式下會等待按 Enter 才啟動 GUI。如需傳遞參數給 `sdkmanager-gui`，透過 `make run` 的位置參數即可。
+Best-effort 意味著：CI 會 build 這些 stage 並 smoke `sdkmanager --ver`，但真正的 SDK Manager 燒錄是手動的，且可能隨 NVIDIA 上游漂移。要讓 GUI/CLI 燒錄成功，請先比照工廠路徑做好相同的 host 前置 —— `./script/host_setup.sh` 與 `./script/nm_flash_guard.sh auto` —— 並登入你的 NVIDIA Developer 帳號。`gui` entrypoint 會印出含這些步驟的 banner，接著（互動模式下）等你按 Enter 才啟動；`-t gui` 之後額外的位置參數會被轉發給 `sdkmanager-gui`（接在 `--no-sandbox` 之後）。GUI 模式需要 host 上的 X11 session（由 base template 自動轉發）。
 
 GUI 模式需要 host 上的 X11 session；base template 會自動偵測 `$DISPLAY` 並轉發 X11 socket 與 `XAUTHORITY`。
 
@@ -194,9 +208,9 @@ GUI 模式需要 host 上的 X11 session；base template 會自動偵測 `$DISPL
 |---|---|---|
 | `./data/jetson_l4t/` | `/srv/jetson_l4t` | BSP + rootfs + 產生的燒錄 image（工廠燒錄流程）。**必須是 ext4 / xfs / btrfs。** |
 | `./data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | 快取的 tarball（BSP + sample rootfs），與 SDK Manager 共用。 |
-| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager 登入 session 快取。僅 inspector stage。 |
-| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager 管理的 SDK 安裝目錄。僅 inspector stage。 |
-| `./jetson.yaml` | `/etc/jetson.yaml`（唯讀） | 使用者設定，被 `prepare.sh` / `flash.sh` / `inspector-entrypoint.sh` 讀取。 |
+| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager 登入 session 快取。僅 `cli` / `gui` stage。 |
+| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager 管理的 SDK 安裝目錄。僅 `cli` / `gui` stage。 |
+| `./jetson.yaml` | `/etc/jetson.yaml`（唯讀） | 使用者設定，被 `prepare.sh` / `flash.sh` / `gui-entrypoint.sh` 讀取。 |
 
 ## 架構
 
@@ -215,12 +229,15 @@ graph TD
     EXT3 --> prepare
     devel --> flash["flash\nCMD flash.sh\n(USB write to Jetson)"]
     devel --> probe["probe\nCMD probe.sh\n(lsusb 0955 sanity check)"]
-    devel --> inspector["inspector\n+ SDK Manager + X11 libs\nCMD inspector-entrypoint.sh"]
-    EXT4 --> inspector
+    devel --> sdkm-base["sdkm-base\n+ SDK Manager + iptables + dnsutils"]
+    EXT4 --> sdkm-base
+    sdkm-base --> cli["cli\nCMD sdkmanager --cli\n(best-effort flash path)"]
+    sdkm-base --> gui["gui\n+ X11 libs\nCMD gui-entrypoint.sh"]
 
     EXT1 --> devel-test["devel-test (ephemeral)\nshellcheck + hadolint + bats"]
     devel --> devel-test
-    inspector --> inspector-test["inspector-test (ephemeral)\nsdkmanager --ver"]
+    gui --> gui-test["gui-test (ephemeral)\nsdkmanager --ver"]
+    cli --> cli-test["cli-test (ephemeral)\nsdkmanager --ver"]
 ```
 
 ## Smoke Tests
@@ -231,7 +248,7 @@ graph TD
 make build test
 ```
 
-`devel-test` stage 對 `devel` image 跑 bats 測試；兩個 `sdkmanager` 斷言會在此被 skip（只在於 `inspector` image 內重跑 bats 時才會執行）。
+`devel-test` stage 對 `devel` image 跑 bats 測試；兩個 `sdkmanager` 斷言會在此被 skip（只在於 `cli` / `gui` image 內重跑 bats 時才會執行）。
 
 ## 目錄結構
 
@@ -239,21 +256,21 @@ make build test
 jetson_sdk_manager/
 ├── jetson.yaml -> config/jetson/agx-orin-emmc.yaml   # symlink；切換 preset
 ├── compose.yaml                 # Docker Compose（衍生，gitignored）
-├── Dockerfile                   # sys → devel-base → devel → {prepare, flash, inspector}
+├── Dockerfile                   # sys → devel-base → devel → {prepare, flash, probe, sdkm-base → cli/gui}
 ├── Makefile -> .base/script/docker/Makefile
 ├── .base/                       # 共用模板（git subtree）
 ├── data/                        # 持久化狀態（gitignored）
 │   ├── jetson_l4t/              #   BSP + rootfs + 燒錄 image
 │   ├── downloads/               #   BSP / rootfs tarball
-│   ├── nvsdkm/                  #   SDK Manager 登入 session（inspector）
-│   └── nvidia_sdk/              #   SDK Manager 安裝目錄（inspector）
+│   ├── nvsdkm/                  #   SDK Manager 登入 session（cli/gui）
+│   └── nvidia_sdk/              #   SDK Manager 安裝目錄（cli/gui）
 ├── config/
 │   ├── docker/setup.conf        # 執行期設定 — source of truth
 │   ├── jetson/                  # 燒錄 preset 與 schema
 │   │   ├── _example.yaml        #   含註解的 canonical schema
 │   │   ├── _l4t_mapping.yaml    #   JetPack → L4T release / URL（build-time）
 │   │   └── *.yaml               #   各 board / storage 的 preset
-│   └── packages/                # inspector 的 X11 lib 清單（按 Ubuntu codename）
+│   └── packages/                # gui stage 的 X11 lib 清單（按 Ubuntu codename）
 ├── doc/
 │   ├── adr/                     # 架構決策記錄
 │   ├── changelog/CHANGELOG.md
@@ -266,7 +283,7 @@ jetson_sdk_manager/
 │   ├── prepare.sh               # 階段 1 entrypoint
 │   ├── flash.sh                 # 階段 2 entrypoint
 │   ├── clean.sh                 # Volume 清理指令
-│   ├── inspector-entrypoint.sh  # SDK Manager GUI 啟動器 + 警示 banner
+│   ├── gui-entrypoint.sh        # SDK Manager GUI 啟動器 + best-effort banner
 │   ├── lib/                     # yaml / download / volume / errors helpers
 │   ├── host_setup.sh            # 一次性 per-boot host 前置(qemu/nfsd/USB)
 │   ├── init_data_dirs.sh        # 首次以非 root 建立 data/
@@ -381,6 +398,14 @@ make run -- -t flash
 ```
 
 用 `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf` 讓它重開機後仍生效。見 [前置需求](#前置需求)。`flash.sh` 現在會先檢查並以相同指引提早中止。
+
+### 燒錄中途卡住 /「Flashing - 99%」/ `mount.nfs: No such file or directory`
+
+容器內的燒錄（任一路徑）卡在中途，幾乎都是 **host 的 NetworkManager** 對 Jetson 的 USB gadget 介面做 DHCP 探測、逾時，並在傳輸途中移除位址所致 —— 這正是 [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48) 追查出的根因。燒錄前跑 `./script/nm_flash_guard.sh auto`（它會把該介面標記為 unmanaged，接著在板子開機後重新啟用 NM）。若你看到的是 `mount.nfs: ... No such file or directory`，則是缺了 host 端的 `/srv/jetson_l4t` 橋接 —— `./script/host_setup.sh` 會把它設好（步驟 5/5）。
+
+### SDK Manager:「Device mode forwarding host setup failed」
+
+這**不是** Docker 的根本限制（早先的 README 曾這麼說 —— 那是錯的）。SDK Manager 的 `device_mode_host_setup.sh` 需要 `iptables`（NAT MASQUERADE）與 `dig`（一個 DNS 可達性探測）;兩者現在都包含在 `sdkm-base` 層，所以 `cli` / `gui` stage 能通過這一步。若仍失敗，確認你已跑過 `./script/host_setup.sh` + `./script/nm_flash_guard.sh auto` 並已登入你的 NVIDIA Developer 帳號。背景：[#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48)。
 
 ### `ERROR: might be timeout in USB write` / `Return value 3`
 

@@ -11,7 +11,7 @@ Containerized NVIDIA Jetson Linux (L4T) factory-flash workflow for Jetson Orin d
 ## Table of Contents
 
 - [TL;DR](#tldr)
-- [Why factory flash, not SDK Manager](#why-factory-flash-not-sdk-manager)
+- [Two flashing paths](#two-flashing-paths)
 - [Prerequisites](#prerequisites)
 - [Configure `jetson.yaml`](#configure-jetsonyaml)
 - [Quick Start](#quick-start)
@@ -44,13 +44,20 @@ make run -- -t prepare && ./script/nm_flash_guard.sh auto && make run -- -t flas
 
 > `./script/host_setup.sh` bundles the per-boot host prerequisites (see [Prerequisites](#prerequisites)); `make run` auto-builds a missing stage image on first invocation. For an explained walkthrough — `make build` per stage, post-flash `nvidia-jetpack` install, headless access, and resume behaviour — see [Quick Start](#quick-start).
 
-## Why factory flash, not SDK Manager
+## Two flashing paths
 
-NVIDIA SDK Manager's GUI / `--cli` workflow flashes a Jetson by running an NFS server on the host and exporting the rootfs to the device over a USB device-mode link, while bridging it through the host's network stack via `iptables`. Inside Docker (even with `--privileged --network host`) this combination is broken: NFS server cannot bind reliably, `iptables` rules from inside the container do not always reach the host's nftables, and `usb-gadget` device-mode forwarding fails. The symptom is the well-known [Flashing - 99% stall](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066) that affects NVIDIA's own Docker image as well.
+This repo ships two ways to flash a Jetson. **Factory flash is the documented default**; SDK Manager is a best-effort alternative.
 
-This repo bypasses that path entirely. The **prepare** stage uses the BSP's own `l4t_initrd_flash.sh --no-flash` to build flash images host-side (no Jetson, no NFS, no `iptables`); the **flash** stage then writes them with `--flash-only`: the Jetson boots a minimal initrd over the `tegrarcm_v2` USB link and pulls the images from a local NFS export on that same link. That export still needs the host's `nfsd` kernel module loaded (see [Prerequisites](#prerequisites)), but — unlike SDK Manager — there is no `iptables` manipulation and no `usb-gadget` device-mode forwarding, so it works reliably in a privileged container.
+| | **Factory flash** (`prepare` / `flash` / `probe`) | **SDK Manager** (`cli` / `gui`) |
+|---|---|---|
+| Status | **Default**, CI-guarded end-to-end | Best-effort, **not CI-guarded** (CI only builds + smokes `sdkmanager --ver`) |
+| NVIDIA login | Not needed | **Required** (session persists in `data/nvsdkm`) |
+| Mode | Scriptable / headless / offline-cacheable | Interactive component selection + host dev tools |
+| Mechanism | `l4t_initrd_flash.sh` over a `tegrarcm_v2` USB link — no device-mode forwarding | SDK Manager's NFS + `iptables` + USB device-mode forwarding |
 
-SDK Manager is still shipped — as best-effort **`cli`** and **`gui`** stages — for browsing the JetPack catalog and, with the prerequisites set up (`host_setup.sh`, `nm_flash_guard.sh auto`, an NVIDIA login), flashing. It is not the supported default; see [SDK Manager (cli / gui)](#sdk-manager-cli--gui).
+The **prepare** stage uses the BSP's own `l4t_initrd_flash.sh --no-flash` to build flash images host-side (no Jetson, no NVIDIA login); the **flash** stage writes them with `--flash-only` — the Jetson boots a minimal initrd over the `tegrarcm_v2` USB link and pulls the images from a local NFS export on that same link. That needs the host's `nfsd` module loaded (see [Prerequisites](#prerequisites)), but no `iptables` or `usb-gadget` device-mode forwarding.
+
+**SDK Manager is _not_ "broken inside Docker"** — an earlier claim this repo has since dropped. The well-known [Flashing-99% stall](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066) was the **host's NetworkManager** DHCP-probing the USB gadget link and tearing it down ([#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48)), fixed by [`nm_flash_guard.sh`](script/nm_flash_guard.sh); the *"Device mode forwarding host setup failed"* step was just missing `iptables` + `dnsutils`, now in `sdkm-base`. With the [shared host prep](#prerequisites) (`host_setup.sh`, `nm_flash_guard.sh auto`) and an NVIDIA login, SDK Manager flashes — see [SDK Manager (cli / gui)](#sdk-manager-cli--gui). Factory flash stays the default because it needs no login and is scriptable/offline.
 
 ## Prerequisites
 
@@ -391,6 +398,14 @@ make run -- -t flash
 ```
 
 Persist across reboots with `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`. See [Prerequisites](#prerequisites). `flash.sh` now pre-checks this and aborts early with the same guidance.
+
+### Flash stalls mid-transfer / "Flashing - 99%" / `mount.nfs: No such file or directory`
+
+The in-container flash (either path) stalling partway is almost always the **host's NetworkManager** DHCP-probing the Jetson's USB gadget interface, timing out, and removing the address mid-transfer — the root cause traced in [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48). Run `./script/nm_flash_guard.sh auto` before flashing (it marks the interface unmanaged, then re-enables NM when the board boots). If instead you see `mount.nfs: ... No such file or directory`, the host `/srv/jetson_l4t` bridge is missing — `./script/host_setup.sh` sets it up (step 5/5).
+
+### SDK Manager: "Device mode forwarding host setup failed"
+
+This is **not** a fundamental Docker limitation (an earlier README claimed so — it was wrong). SDK Manager's `device_mode_host_setup.sh` needs `iptables` (NAT MASQUERADE) and `dig` (a DNS reachability probe); both now ship in the `sdkm-base` layer, so the `cli` / `gui` stages clear this step. If it still fails, confirm you ran `./script/host_setup.sh` + `./script/nm_flash_guard.sh auto` and are signed in to your NVIDIA Developer account. Context: [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48).
 
 ### `ERROR: might be timeout in USB write` / `Return value 3`
 
