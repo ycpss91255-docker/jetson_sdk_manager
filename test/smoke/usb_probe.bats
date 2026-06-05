@@ -56,6 +56,23 @@ setup() {
   jetson_pid_is_recovery 7023
 }
 
+@test "JETSON_BOOTED_PID is the booted L4T device-mode PID and not a recovery PID" {
+  [[ "${JETSON_BOOTED_PID}" == "7020" ]]
+  ! jetson_pid_is_recovery "${JETSON_BOOTED_PID}"
+}
+
+@test "jetson_is_booted_l4t is true when the booted PID is on the bus" {
+  _stub_lsusb "printf 'Bus 001 Device 003: ID 0955:7020 NVIDIA Corp. L4T\n'"
+  jetson_is_booted_l4t
+}
+
+@test "jetson_is_booted_l4t is false for an empty bus or a recovery-only device" {
+  _stub_lsusb "exit 0"
+  ! jetson_is_booted_l4t
+  _stub_lsusb "[[ \"\$*\" == *7020* ]] || printf 'Bus 001 Device 002: ID 0955:7023 NVIDIA Corp. APX\n'"
+  ! jetson_is_booted_l4t
+}
+
 _stub_lsusb() {
   STUB_BIN="${BATS_TEST_TMPDIR}/stub-bin"
   mkdir -p "${STUB_BIN}"

@@ -230,7 +230,7 @@ COPY script/lib /lint/script_lib
 RUN shellcheck -S warning /lint/wrapper/*.sh /lint/lib/*.sh && \
     shellcheck -S warning \
         /lint/prepare.sh /lint/flash.sh /lint/probe.sh /lint/clean.sh \
-        /lint/inspector-entrypoint.sh \
+        /lint/inspector-entrypoint.sh /lint/nm_flash_guard.sh \
         /lint/init_data_dirs.sh /lint/entrypoint.sh \
         /lint/script_lib/*.sh
 WORKDIR /lint
@@ -253,6 +253,9 @@ ENV BATS_LIB_PATH="/usr/lib/bats"
 COPY --chmod=0755 script/prepare.sh /opt/jetson_install/prepare.sh
 COPY --chmod=0755 script/flash.sh /opt/jetson_install/flash.sh
 COPY --chmod=0755 script/probe.sh /opt/jetson_install/probe.sh
+# Host-side flash guard (#50 auto mode) — copied so its bats unit test
+# exercises the watcher instead of skipping. Sources lib/usb.sh below.
+COPY --chmod=0755 script/nm_flash_guard.sh /opt/jetson_install/nm_flash_guard.sh
 COPY --chmod=0755 script/lib /opt/jetson_install/lib
 
 # Smoke test (shared from template + repo-specific)
