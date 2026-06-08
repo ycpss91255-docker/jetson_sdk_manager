@@ -313,6 +313,7 @@ RUN case "${TARGETARCH}" in \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         sdkmanager iptables dnsutils \
+        libgl1-mesa-dri dbus-x11 \
         && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*

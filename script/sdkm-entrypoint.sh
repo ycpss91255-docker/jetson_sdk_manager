@@ -47,4 +47,13 @@ if [[ "$#" -eq 0 ]]; then
   exit 2
 fi
 
+# SDK Manager (cli AND gui) is an Electron app whose install flow is driven by a
+# UI "screen" state machine; a private session bus keeps that renderer healthy.
+# Without it the cli renderer degrades and intermittently deadlocks at the
+# download -> flash screen transition ("could not find screen: Step3", #87).
+# Wrap in dbus-run-session when present (cli + gui share this launcher); fall
+# back to a direct exec otherwise.
+if command -v dbus-run-session >/dev/null 2>&1; then
+  exec dbus-run-session -- "$@"
+fi
 exec "$@"
