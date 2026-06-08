@@ -1,2 +1,8 @@
 libasound2t64
 libcanberra-gtk3-module
+# Software GL driver (swrast/llvmpipe) so SDK Manager's Electron client renders
+# without the MESA-LOADER "failed to open ..." errors (#79).
+libgl1-mesa-dri
+# Session bus for the Electron client, so it stops spewing dbus connection
+# errors; gui-entrypoint.sh wraps the launch in dbus-run-session (#79).
+dbus-x11

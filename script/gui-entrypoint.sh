@@ -81,9 +81,14 @@ main() {
   print_jetson_yaml_hint
   wait_for_ack
   # Delegate the non-unix-FS data-dir guard to the shared launcher, then
-  # hand off to the GUI binary.
-  exec /opt/jetson_install/sdkm-entrypoint.sh \
-    /opt/nvidia/sdkmanager/sdkmanager-gui --no-sandbox "$@"
+  # hand off to the GUI binary. Wrap the Electron client in a private session
+  # bus (dbus-run-session) when available so it stops emitting "Failed to
+  # connect to the bus" noise; falls back to a direct launch otherwise (#79).
+  local launch=(/opt/nvidia/sdkmanager/sdkmanager-gui --no-sandbox "$@")
+  if command -v dbus-run-session >/dev/null 2>&1; then
+    launch=(dbus-run-session -- "${launch[@]}")
+  fi
+  exec /opt/jetson_install/sdkm-entrypoint.sh "${launch[@]}"
 }
 
 main "$@"
