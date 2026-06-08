@@ -265,8 +265,8 @@ Each path under `./data/` is bind-mounted into the container (gitignored).
 |---|---|---|
 | `./data/jetson_l4t/` | `/srv/jetson_l4t` | BSP + rootfs + generated flash images (factory-flash workflow). **Must be ext4 / xfs / btrfs.** |
 | `./data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | Cached tarballs (BSP + sample rootfs), shared with SDK Manager. |
-| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager login session cache. `cli` / `gui` stages only. |
-| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager-managed SDK install folder. `cli` / `gui` stages only. |
+| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager login session cache + its SSH key. `cli` / `gui` stages only. **Must be ext4 / xfs / btrfs** — a non-unix FS forces the SSH key to 0777 and ssh refuses it, stalling the on-device install. |
+| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager-managed SDK install folder (extracted setuid rootfs). `cli` / `gui` stages only. **Must be ext4 / xfs / btrfs.** |
 | `./jetson.yaml` | `/etc/jetson.yaml` (read-only) | User config, read by `prepare.sh` / `flash.sh` / `gui-entrypoint.sh`. |
 
 ## Architecture

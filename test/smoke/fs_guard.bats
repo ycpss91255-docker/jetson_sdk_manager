@@ -77,14 +77,38 @@ _stub_stat() {
 
 @test "sdkm-entrypoint exits 2 when no SDK Manager command is given" {
   [[ -n "${SDKM_SH:-}" ]] || skip "sdkm-entrypoint.sh not present in this image"
-  SDKM_DATA_DIR="${BATS_TEST_TMPDIR}/sdk" run "${SDKM_SH}"
+  SDKM_DATA_DIR="${BATS_TEST_TMPDIR}/sdk" SDKM_CONF_DIR="${BATS_TEST_TMPDIR}/conf" \
+    run "${SDKM_SH}"
   assert_failure
   [[ "${status}" -eq 2 ]]
 }
 
 @test "sdkm-entrypoint execs the given command on a unix filesystem" {
   [[ -n "${SDKM_SH:-}" ]] || skip "sdkm-entrypoint.sh not present in this image"
-  SDKM_DATA_DIR="${BATS_TEST_TMPDIR}/sdk" run "${SDKM_SH}" echo sdkm-ran
+  SDKM_DATA_DIR="${BATS_TEST_TMPDIR}/sdk" SDKM_CONF_DIR="${BATS_TEST_TMPDIR}/conf" \
+    run "${SDKM_SH}" echo sdkm-ran
   assert_success
   assert_output --partial 'sdkm-ran'
+}
+
+@test "sdkm-entrypoint aborts when ~/.nvsdkm is on a non-unix FS (#85)" {
+  [[ -n "${SDKM_SH:-}" ]] || skip "sdkm-entrypoint.sh not present in this image"
+  # stat stub: nvidia_sdk dir passes (ext4), the nvsdkm/conf dir is ntfs — so
+  # the data-dir guard clears and the new nvsdkm guard is the one that fires.
+  STUB_BIN="${BATS_TEST_TMPDIR}/stub-bin"
+  mkdir -p "${STUB_BIN}"
+  cat >"${STUB_BIN}/stat" <<'EOF'
+#!/usr/bin/env bash
+for a in "$@"; do p="$a"; done
+case "$p" in
+  *conf*|*nvsdkm*) printf 'ntfs\n' ;;
+  *) printf 'ext4\n' ;;
+esac
+EOF
+  chmod +x "${STUB_BIN}/stat"
+  SDKM_DATA_DIR="${BATS_TEST_TMPDIR}/nvidia_sdk" SDKM_CONF_DIR="${BATS_TEST_TMPDIR}/conf" \
+    PATH="${STUB_BIN}:${PATH}" run "${SDKM_SH}" echo should-not-run
+  assert_failure
+  refute_output --partial 'should-not-run'
+  assert_output --partial './data/nvsdkm'   # the nvsdkm guard's --action, not the data-dir one
 }
