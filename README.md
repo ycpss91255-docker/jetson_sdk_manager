@@ -464,6 +464,19 @@ The in-container flash (either path) stalling partway is almost always the **hos
 
 This is **not** a fundamental Docker limitation (an earlier README claimed so — it was wrong). SDK Manager's `device_mode_host_setup.sh` needs `iptables` (NAT MASQUERADE) and `dig` (a DNS reachability probe); both now ship in the `sdkm-base` layer, so the `cli` / `gui` stages clear this step. If it still fails, confirm you ran `./script/host_setup.sh` + `./script/nm_flash_guard.sh auto` and are signed in to your NVIDIA Developer account. Context: [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48).
 
+### SDK Manager GUI: component install hangs (a step stuck at a fixed %)
+
+SDK Manager's on-device SDK-component install can hang in the GUI — a step (often "Additional Setups", or any package) sits at a fixed percentage and the "taking longer than expected" dialog keeps reappearing — even though the device-side step already finished and the board has working network (`ping 8.8.8.8` from the board succeeds). This is an SDK Manager (upstream) progress-tracking flakiness, **not a flash failure**: the OS is already flashed and the board boots.
+
+You do not need SDK Manager to finish the component install. The flashed board already has the NVIDIA L4T apt source configured, so install the full JetPack SDK directly on the board — the same packages, and exactly what the factory path does:
+
+```bash
+ssh <user>@192.168.55.1
+sudo apt update && sudo apt install -y nvidia-jetpack
+```
+
+This is one more reason the factory `prepare` / `flash` path is the documented default: it installs the SDK components on the booted board via apt, with no GUI step to hang.
+
 ### `ERROR: might be timeout in USB write` / `Return value 3`
 
 Boot ROM communication stalls during USB bulk transfer:

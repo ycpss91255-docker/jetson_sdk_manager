@@ -464,6 +464,19 @@ make run -- -t flash
 
 这**不是** Docker 的根本性限制（早先的 README 这样宣称 —— 那是错的）。SDK Manager 的 `device_mode_host_setup.sh` 需要 `iptables`（NAT MASQUERADE）和 `dig`（一个 DNS 可达性探测）；两者现在都随 `sdkm-base` 层一起提供，所以 `cli` / `gui` stage 能通过这一步。若仍失败，确认你跑了 `./script/host_setup.sh` + `./script/nm_flash_guard.sh auto` 并已登录你的 NVIDIA Developer 账号。背景：[#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48)。
 
+### SDK Manager GUI：组件安装卡住（某步停在固定百分比）
+
+SDK Manager 在板子上装 SDK 组件那步可能在 GUI 卡住 —— 某个步骤（常是「Additional Setups」，或任一软件包）停在固定百分比、「taking longer than expected」对话框反复弹出 —— 即使板子端那步其实已完成、板子也有网络（板子上 `ping 8.8.8.8` 会通）。这是 SDK Manager（上游）自己的进度追踪毛病，**不是 flash 失败**：OS 早就烧好、板子也能开起来。
+
+你不需要等 SDK Manager 把组件装完。烧好的板子已经配好 NVIDIA L4T apt source，直接在板子上装整套 JetPack SDK 即可 —— 跟 SDK Manager 要推的是同一批软件包，也正是 factory 那条的做法：
+
+```bash
+ssh <user>@192.168.55.1
+sudo apt update && sudo apt install -y nvidia-jetpack
+```
+
+这也是 factory `prepare` / `flash` 为何是文档默认的另一个理由：它在开机后的板子上用 apt 装 SDK 组件，没有会卡住的 GUI 步骤。
+
 ### `ERROR: might be timeout in USB write` / `Return value 3`
 
 Boot ROM 通讯在 USB bulk transfer 时卡住：

@@ -466,6 +466,19 @@ make run -- -t flash
 
 これは Docker の根本的な制約では**ありません**（以前の README はそう主張していましたが、それは誤りでした）。SDK Manager の `device_mode_host_setup.sh` は `iptables`（NAT MASQUERADE）と `dig`（DNS 到達性プローブ）を必要とします；どちらも現在は `sdkm-base` レイヤーに含まれているため、`cli` / `gui` stage はこのステップをクリアします。それでも失敗する場合は、`./script/host_setup.sh` + `./script/nm_flash_guard.sh auto` を実行したか、NVIDIA Developer アカウントでサインインしているかを確認してください。詳細：[#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48)。
 
+### SDK Manager GUI：コンポーネントのインストールがハングする（あるステップが特定の % で停止）
+
+SDK Manager のオンデバイス SDK コンポーネントのインストールは、デバイス側のステップが実際には完了しボードにネットワークがある（ボード上で `ping 8.8.8.8` が成功する）にもかかわらず、GUI でハングすることがあります —— あるステップ（多くは「Additional Setups」や任意のパッケージ）が特定の割合で止まり、「taking longer than expected」ダイアログが繰り返し表示されます。これは SDK Manager（上流）側の進捗追跡の不安定さであり、**flash の失敗ではありません**：OS はすでに書き込まれ、ボードは起動します。
+
+コンポーネントのインストールを SDK Manager に完了させる必要はありません。書き込まれたボードには NVIDIA L4T apt source がすでに設定されているため、JetPack SDK 一式をボード上で直接インストールできます —— SDK Manager が push するのと同じパッケージで、factory パスがまさに行っていることです：
+
+```bash
+ssh <user>@192.168.55.1
+sudo apt update && sudo apt install -y nvidia-jetpack
+```
+
+これは factory `prepare` / `flash` パスがドキュメントのデフォルトである、もう一つの理由です：起動後のボードに apt で SDK コンポーネントをインストールするため、ハングする GUI ステップがありません。
+
 ### `ERROR: might be timeout in USB write` / `Return value 3`
 
 Boot ROM 通信が USB bulk transfer 中に停止：
