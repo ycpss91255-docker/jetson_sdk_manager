@@ -9,6 +9,12 @@
 # (lib/fs.sh), then exec whatever SDK Manager invocation the stage's CMD
 # passes (e.g. `sdkmanager --cli`).
 #
+# SDK Manager also generates an SSH key under ~/.nvsdkm/.ssh (host:
+# ./data/nvsdkm) and uses it to reach the booted board for the on-device
+# install steps. On a non-unix FS the key is forced 0777 and ssh refuses it
+# ("bad permissions" -> key ignored), so the OS flashes but the on-device
+# install silently stalls (#85). Guard that dir too.
+#
 # Device-mode flash forwarding (iptables MASQUERADE + a DNS probe) is set
 # up by SDK Manager itself; the cli/gui images ship iptables +
 # dnsutils so that step no longer fails. NetworkManager handling for the
@@ -28,6 +34,13 @@ SDKM_DATA_DIR="${SDKM_DATA_DIR:-${HOME}/nvidia/nvidia_sdk}"
 
 assert_unix_fs "${SDKM_DATA_DIR}" "sdkmanager" \
   --action "SDK Manager extracts the flashable L4T rootfs under ${SDKM_DATA_DIR} (host: ./data/nvidia_sdk)"
+
+# SDK Manager's config + SSH key dir (container path; overridable for tests).
+# Maps to ./data/nvsdkm on the host.
+SDKM_CONF_DIR="${SDKM_CONF_DIR:-${HOME}/.nvsdkm}"
+
+assert_unix_fs "${SDKM_CONF_DIR}" "sdkmanager" \
+  --action "SDK Manager stores its SSH key under ${SDKM_CONF_DIR}/.ssh; a non-unix FS forces it 0777 and ssh refuses it, stalling the on-device install (host: ./data/nvsdkm)"
 
 if [[ "$#" -eq 0 ]]; then
   printf 'sdkm-entrypoint.sh: no SDK Manager command given\n' >&2

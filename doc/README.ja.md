@@ -267,8 +267,8 @@ GUI モードは host の X11 セッションが必要です；base template が
 |---|---|---|
 | `./data/jetson_l4t/` | `/srv/jetson_l4t` | BSP + rootfs + 生成されたフラッシュイメージ（ファクトリーフラッシュ）。**ext4 / xfs / btrfs であること。** |
 | `./data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | キャッシュした tarball（BSP + sample rootfs）、SDK Manager と共用。 |
-| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager ログインセッションキャッシュ。`cli` / `gui` stage のみ。 |
-| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager 管理の SDK インストールフォルダ。`cli` / `gui` stage のみ。 |
+| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager ログインセッションキャッシュ + その SSH 鍵。`cli` / `gui` stage のみ。**ext4 / xfs / btrfs 必須** —— 非 unix FS では SSH 鍵が 0777 に強制され、ssh が拒否してオンデバイスインストールが停止します。 |
+| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager 管理の SDK インストールフォルダ（展開された setuid rootfs）。`cli` / `gui` stage のみ。**ext4 / xfs / btrfs 必須。** |
 | `./jetson.yaml` | `/etc/jetson.yaml`（読み取り専用） | ユーザー設定、`prepare.sh` / `flash.sh` / `gui-entrypoint.sh` が読み取り。 |
 
 ## アーキテクチャ

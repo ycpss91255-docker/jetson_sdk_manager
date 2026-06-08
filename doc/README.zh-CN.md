@@ -265,8 +265,8 @@ GUI 模式需要 host 上的 X11 session；base template 会自动检测 `$DISPL
 |---|---|---|
 | `./data/jetson_l4t/` | `/srv/jetson_l4t` | BSP + rootfs + 生成的烧录 image（工厂烧录流程）。**必须是 ext4 / xfs / btrfs。** |
 | `./data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | 缓存的 tarball（BSP + sample rootfs），与 SDK Manager 共用。 |
-| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager 登录 session 缓存。仅 `cli` / `gui` stage。 |
-| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager 管理的 SDK 安装目录。仅 `cli` / `gui` stage。 |
+| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager 登录 session 缓存 + 它的 SSH 私钥。仅 `cli` / `gui` stage。**须为 ext4 / xfs / btrfs** —— 非 unix FS 会把私钥强制成 0777,ssh 拒用,卡住 on-device 安装。 |
+| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager 管理的 SDK 安装目录（解压的 setuid rootfs）。仅 `cli` / `gui` stage。**须为 ext4 / xfs / btrfs。** |
 | `./jetson.yaml` | `/etc/jetson.yaml`（只读） | 用户配置，被 `prepare.sh` / `flash.sh` / `gui-entrypoint.sh` 读取。 |
 
 ## 架构
