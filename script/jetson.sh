@@ -12,7 +12,7 @@
 #   ./jetson status              host readiness + Jetson USB state
 #   ./jetson prepare             host_setup → init_data_dirs → make run -t prepare
 #   ./jetson wait-rec [seconds]  poll until a Jetson shows up in recovery
-#   ./jetson flash               (board in REC) nm guard → usb ss guard → make run -t flash
+#   ./jetson flash               (board in REC) host NFS export → nm guard → usb ss guard → make run -t flash
 #   ./jetson all                 prepare → wait-rec → flash
 #   ./jetson teardown            host_teardown.sh
 #   ./jetson purge [--yes] [--keep-downloads]   clean.sh purge
@@ -35,6 +35,8 @@ L4T_REPO_ROOT="${L4T_REPO_ROOT:-${_REPO}}"
 . "${_HERE}/lib/store.sh"
 # shellcheck source=lib/status.sh
 . "${_HERE}/lib/status.sh"
+# shellcheck source=lib/nfs_export.sh
+. "${_HERE}/lib/nfs_export.sh"
 
 # Sibling scripts — overridable for tests.
 HOST_SETUP_BIN="${HOST_SETUP_BIN:-${_HERE}/host_setup.sh}"
@@ -142,6 +144,8 @@ cmd_flash() {
   # nm_flash_guard.sh writes a NetworkManager conf.d file, so it needs root:
   # ask once here, up front, instead of failing mid-way without a tty.
   _sudo_once
+  _say "flash — exporting the L4T tree from the host NFS server (if the host runs one)"
+  _refresh_host_export
   _say "flash — guarding NetworkManager for the USB link"
   "${NM_GUARD_BIN}" auto
   # The initrd gadget's SuperSpeed link may never train and each retry tears
@@ -157,6 +161,20 @@ cmd_flash() {
   Then finish JetPack on the device:
     sudo apt update && sudo apt install -y nvidia-jetpack
 NEXT
+}
+
+# _refresh_host_export — export the prepared tree from the host NFS server
+# right before EVERY flash (#101). host_setup.sh already did it once, but a
+# re-prepare (clean.sh build) regenerates tools/kernel_flash/images, and
+# the old export then points at a dead inode: the board gets 'mount.nfs:
+# Stale file handle'. nfs_export_on unexports, re-exports and flushes.
+# Needs root — _sudo_once has just cached it. A no-op without exportfs on
+# the host (the container's own NFS server is enough then).
+_refresh_host_export() {
+  local l4t
+  # _phase_done images (above) already guaranteed exactly one prepared tree.
+  l4t="$(nfs_export_l4t_dir)" || _die "could not locate the prepared L4T tree under data/jetson_l4t" "run ./jetson status"
+  nfs_export_on "${l4t}" || _die "exporting the L4T tree from the host NFS server failed" "fix what the error above names, then ./jetson flash again"
 }
 
 # _sudo_once — one password prompt up front instead of one per sub-step.
@@ -308,9 +326,18 @@ _status_srv() {
   if store_same_inode "${srv}" "${data}" 2>/dev/null; then printf 'ok\t%s bridged to data/jetson_l4t\n' "${srv}"
   else printf 'warn\t%s not bridged — only needed for flash; ./jetson prepare (host_setup.sh) does it\n' "${srv}"; fi
 }
+# Host NFS export (#101): ⚠ when a host rpc.mountd runs but the prepared
+# tree is not exported from it — the board's mount.nfs would hang. With no
+# tree (or an ambiguous pair, which status_prepare already flags) the
+# check reports what will export it later.
+_status_nfs_export() {
+  local l4t
+  l4t="$(nfs_export_l4t_dir 2>/dev/null)" || l4t=""
+  nfs_export_status "${l4t}"
+}
 
 # The check list is overridable so the test suite can inject a failing one.
-JETSON_STATUS_CHECKS="${JETSON_STATUS_CHECKS:-_status_tools status_config status_store _status_srv status_kernel _status_nm status_usb_ss_guard _status_images status_prepare status_jetson}"
+JETSON_STATUS_CHECKS="${JETSON_STATUS_CHECKS:-_status_tools status_config status_store _status_srv _status_nfs_export status_kernel _status_nm status_usb_ss_guard _status_images status_prepare status_jetson}"
 
 cmd_status() {
   local strict="" bad=0 warn=0 level msg chk out
