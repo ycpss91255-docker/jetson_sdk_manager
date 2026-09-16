@@ -76,21 +76,28 @@ _ok()   { printf '  ok: %s\n' "$1" >&2; }
 
 # _unexport_l4t_trees — step 1 body. Unexport every prepared tree found under
 # data/jetson_l4t (usually one; after a board switch without clean.sh there
-# may be two — unexporting both is harmless). No-op without exportfs, or when
-# nothing is prepared / the store is already down.
+# may be two) PLUS whatever the host's export table still lists under
+# /srv/jetson_l4t — a `clean.sh l4t` before this teardown removes the
+# marker but not the export, and an export left behind pins the bridge
+# mount (umount: target is busy). No-op without exportfs.
 _unexport_l4t_trees() {
-  local l4t n=0
-  while IFS= read -r l4t; do
-    [[ -n "${l4t}" ]] || continue
-    n=$((n+1))
-    nfs_export_off "${l4t}"
-  done < <(nfs_export_l4t_dirs)
-  (( n > 0 )) || _ok "no prepared L4T tree under data/jetson_l4t — nothing to unexport"
+  local -a trees=()
+  local l4t
+  while IFS= read -r l4t; do [[ -n "${l4t}" ]] && trees+=("${l4t}"); done < <(nfs_export_l4t_dirs)
+  nfs_export_off_all "${trees[@]+"${trees[@]}"}"
 }
+
+_warn() { printf '  \033[33mwarning: %s\033[0m\n' "$1" >&2; }
+_TEARDOWN_RC=0
 
 main() {
   _step "1/7 Unexporting the L4T tree from the host NFS server (if the host runs one)"
-  _unexport_l4t_trees
+  # A failed flush is reported, not fatal: the remaining steps (USB, NM) are
+  # independent and the user is told what to run by hand.
+  if ! _unexport_l4t_trees; then
+    _warn "unexporting failed — the ${L4T_EXPORT_DIR} umount below may report 'target is busy'; run: sudo exportfs -f"
+    _TEARDOWN_RC=1
+  fi
 
   _step "2/7 Unmounting the NFS export bridge ${L4T_EXPORT_DIR}"
   if "${MOUNTPOINT_BIN}" -q "${L4T_EXPORT_DIR}"; then
@@ -174,6 +181,10 @@ main() {
 Note: QEMU binfmt and the nfsd module are intentionally left in place
 (harmless / shared) — a reboot clears them along with everything else.
 EOF
+  if (( _TEARDOWN_RC != 0 )); then
+    printf '[host-teardown] one step reported a problem (see the warning above).\n' >&2
+  fi
+  return "${_TEARDOWN_RC}"
 }
 
 main "$@"

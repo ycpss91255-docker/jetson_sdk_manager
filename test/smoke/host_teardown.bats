@@ -224,16 +224,28 @@ EOF
 
 # ── host NFS export (#101) ───────────────────────────────────────────
 
-@test "host_teardown unexports the L4T tree from the host NFS server BEFORE unmounting /srv" {
+# exportfs in the lib's test mode (NFS_EXPORT_TEST_ROOT=<tmpdir> →
+# <tmpdir>/bin/exportfs, no sudo; export dir <tmpdir>/srv/jetson_l4t =
+# L4T_EXPORT_DIR; export table <tmpdir>/etab). EXPORTFS_FAIL="-f:1" makes
+# the flush fail.
+_stub_exportfs() {
   EXPORTFS_LOG="${BATS_TEST_TMPDIR}/exportfs.log"; export EXPORTFS_LOG
-  cat >"${STUB_BIN}/exportfs" <<'EOF'
+  export NFS_EXPORT_TEST_ROOT="${BATS_TEST_TMPDIR}"
+  mkdir -p "${BATS_TEST_TMPDIR}/bin"
+  cat >"${BATS_TEST_TMPDIR}/bin/exportfs" <<'EOF'
 #!/usr/bin/env bash
 printf 'exportfs %s\n' "$*" >>"${EXPORTFS_LOG}"
+[[ "${EXPORTFS_FAIL:-}" == "${1}:1" ]] && { echo 'exportfs: simulated failure' >&2; exit 1; }
+exit 0
 EOF
-  chmod +x "${STUB_BIN}/exportfs"
-  local rel="JetPack_6.2.2_Linux_jetson-agx-orin-devkit/Linux_for_Tegra"
-  mkdir -p "${STORE_DATA}/${rel}"
-  : >"${STORE_DATA}/${rel}/.prepared.yaml"
+  chmod +x "${BATS_TEST_TMPDIR}/bin/exportfs"
+}
+REL="JetPack_6.2.2_Linux_jetson-agx-orin-devkit/Linux_for_Tegra"
+
+@test "host_teardown unexports the L4T tree from the host NFS server BEFORE unmounting /srv" {
+  _stub_exportfs
+  mkdir -p "${STORE_DATA}/${REL}"
+  : >"${STORE_DATA}/${REL}/.prepared.yaml"
   run "${HOST_TEARDOWN}"
   assert_success
   # The kernel nfsd pins an exported directory: unexport first, or the
@@ -241,8 +253,38 @@ EOF
   assert_output --partial 'unexported'
   [[ "${output#*unexported}" == *"Unmounting the NFS export bridge"* ]]
   run cat "${EXPORTFS_LOG}"
-  assert_line --index 0 "exportfs -u [fc00:1:1::/48]:${L4T_EXPORT_DIR}/${rel}/rootfs"
-  assert_line --index 1 "exportfs -u [fc00:1:1::/48]:${L4T_EXPORT_DIR}/${rel}/tools/kernel_flash/images"
-  assert_line --index 2 "exportfs -u [fc00:1:1::/48]:${L4T_EXPORT_DIR}/${rel}/tools/kernel_flash/tmp"
+  assert_line --index 0 "exportfs -u [fc00:1:1::/48]:${L4T_EXPORT_DIR}/${REL}/rootfs"
+  assert_line --index 1 "exportfs -u [fc00:1:1::/48]:${L4T_EXPORT_DIR}/${REL}/tools/kernel_flash/images"
+  assert_line --index 2 "exportfs -u [fc00:1:1::/48]:${L4T_EXPORT_DIR}/${REL}/tools/kernel_flash/tmp"
   assert_line --index 3 'exportfs -f'
+  [[ "${#lines[@]}" -eq 4 ]]
 }
+
+@test "host_teardown also unexports what the export table still lists under /srv/jetson_l4t when the marker is gone (clean.sh l4t first)" {
+  _stub_exportfs
+  # No .prepared.yaml anywhere, but etab still has the exports (real format:
+  # tab separated, bare client).
+  printf '%s/%s/rootfs\tfc00:1:1::/48(rw,async,no_root_squash)\n' "${L4T_EXPORT_DIR}" "${REL}" >"${BATS_TEST_TMPDIR}/etab"
+  printf '%s/%s/tools/kernel_flash/images\tfc00:1:1::/48(rw,async,no_root_squash)\n' "${L4T_EXPORT_DIR}" "${REL}" >>"${BATS_TEST_TMPDIR}/etab"
+  printf '/home/someone/share\t*(ro)\n' >>"${BATS_TEST_TMPDIR}/etab"
+  run "${HOST_TEARDOWN}"
+  assert_success
+  run cat "${EXPORTFS_LOG}"
+  assert_line "exportfs -u [fc00:1:1::/48]:${L4T_EXPORT_DIR}/${REL}/rootfs"
+  assert_line "exportfs -u [fc00:1:1::/48]:${L4T_EXPORT_DIR}/${REL}/tools/kernel_flash/images"
+  refute_output --partial '/home/someone/share'   # not ours
+  assert_line --index 2 'exportfs -f'
+}
+
+@test "host_teardown warns, still unmounts, and exits non-zero when the export flush fails" {
+  _stub_exportfs
+  mkdir -p "${STORE_DATA}/${REL}"
+  : >"${STORE_DATA}/${REL}/.prepared.yaml"
+  EXPORTFS_FAIL='-f:1' run "${HOST_TEARDOWN}"
+  assert_failure
+  assert_output --partial 'exportfs -f failed'
+  assert_output --partial 'Unmounting the NFS export bridge'
+  run cat "${UMOUNT_LOG}"
+  assert_line --index 0 "${L4T_EXPORT_DIR}"
+}
+

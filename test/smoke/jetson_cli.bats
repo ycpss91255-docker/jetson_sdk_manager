@@ -85,11 +85,15 @@ echo active
 EOF
   chmod +x "${STUB_BIN}/docker" "${STUB_BIN}/systemctl"
 
-  # Host NFS export (#101): exportfs is on PATH (the sudo stub only logs, so
-  # it is never really run); the "/srv bridge" is the data dir itself, with
-  # the three export dirs present; no host rpc.mountd unless MOUNTD=1; no
-  # readable export table.
-  cat >"${STUB_BIN}/exportfs" <<'EOF'
+  # Host NFS export (#101), in the lib's test mode: NFS_EXPORT_TEST_ROOT →
+  # exportfs is <tmpdir>/bin/exportfs run WITHOUT sudo (logged into CALLS
+  # so its place in the sequence is visible), the export dir is
+  # <tmpdir>/srv/jetson_l4t (a symlink to the data dir here — the bridge),
+  # the export table <tmpdir>/etab (absent by default). No host rpc.mountd
+  # unless MOUNTD=1.
+  export NFS_EXPORT_TEST_ROOT="${BATS_TEST_TMPDIR}"
+  mkdir -p "${BATS_TEST_TMPDIR}/bin" "${BATS_TEST_TMPDIR}/srv"
+  cat >"${BATS_TEST_TMPDIR}/bin/exportfs" <<'EOF'
 #!/usr/bin/env bash
 printf 'exportfs %s\n' "$*" >>"${CALLS}"
 EOF
@@ -98,10 +102,11 @@ EOF
 [[ "$*" == *rpc.mountd* && -n "${MOUNTD:-}" ]] && { echo 4242; exit 0; }
 exit 1
 EOF
-  chmod +x "${STUB_BIN}/exportfs" "${STUB_BIN}/pgrep"
-  export L4T_EXPORT_DIR="${L4T_REPO_ROOT}/data/jetson_l4t"
+  chmod +x "${BATS_TEST_TMPDIR}/bin/exportfs" "${STUB_BIN}/pgrep"
+  ln -s "${L4T_REPO_ROOT}/data/jetson_l4t" "${BATS_TEST_TMPDIR}/srv/jetson_l4t"
+  export L4T_EXPORT_DIR="${BATS_TEST_TMPDIR}/srv/jetson_l4t"
+  L4T_HOST_TREE="${L4T_EXPORT_DIR}/JetPack_6.2.2_Linux_jetson-agx-orin-devkit/Linux_for_Tegra"
   mkdir -p "${L4T_TREE}/rootfs" "${L4T_TREE}/tools/kernel_flash/images" "${L4T_TREE}/tools/kernel_flash/tmp"
-  export NFS_ETAB="${BATS_TEST_TMPDIR}/no-such-etab"
 
   REC='Bus 003 Device 049: ID 0955:7023 NVIDIA Corp. APX'
   BOOTED='Bus 002 Device 009: ID 0955:7020 NVIDIA Corp. L4T (Linux for Tegra) running on Tegra'
@@ -138,7 +143,7 @@ EOF
   LSUSB_OUT="${REC}" run "${JETSON}" flash
   assert_success
   assert_output --partial '192.168.55.1'
-  run grep -vE '^(lsusb|sudo)' "${CALLS}"
+  run grep -vE '^(lsusb|sudo|exportfs)' "${CALLS}"
   assert_line --index 0 'nm_flash_guard.sh auto'
   assert_line --index 2 'make run -- -t flash'
 }
@@ -210,7 +215,7 @@ EOF
   assert_success
   assert_output --partial '[1/3]'
   assert_output --partial '[3/3]'
-  run grep -vE '^(lsusb|sudo)' "${CALLS}"
+  run grep -vE '^(lsusb|sudo|exportfs)' "${CALLS}"
   assert_line --index 0 'host_setup.sh '
   assert_line --index 1 'init_data_dirs.sh '
   assert_line --index 2 'make run -- -t prepare'
@@ -390,7 +395,7 @@ EOF
   assert_output --partial '[1/3] wait for recovery'
   assert_output --partial '[2/3] prepare'
   assert_output --partial '[3/3] flash'
-  run grep -vE '^(lsusb|sudo)' "${CALLS}"
+  run grep -vE '^(lsusb|sudo|exportfs)' "${CALLS}"
   assert_line --index 0 'host_setup.sh '
   assert_line --index 2 'make run -- -t prepare'
   assert_line --index 3 'nm_flash_guard.sh auto'
@@ -401,7 +406,7 @@ EOF
 @test "flash validates sudo once before the NetworkManager guard (nm_flash_guard needs root)" {
   LSUSB_OUT="${REC}" run "${JETSON}" flash
   assert_success
-  run grep -vE '^(lsusb|sudo exportfs)' "${CALLS}"
+  run grep -vE '^(lsusb|exportfs)' "${CALLS}"
   assert_line --index 0 --regexp '^sudo (-n )?-v$'
   assert_line --index 1 'nm_flash_guard.sh auto'
 }
@@ -415,11 +420,11 @@ EOF
   assert_success
   run grep -v '^lsusb' "${CALLS}"
   assert_line --index 0 --regexp '^sudo (-n )?-v$'
-  assert_line --index 1 "sudo exportfs -u [fc00:1:1::/48]:${L4T_TREE}/rootfs"
-  assert_line --index 2 "sudo exportfs -o rw,nohide,insecure,no_subtree_check,async,no_root_squash [fc00:1:1::/48]:${L4T_TREE}/rootfs"
-  assert_line --index 4 --partial "[fc00:1:1::/48]:${L4T_TREE}/tools/kernel_flash/images"
-  assert_line --index 6 --partial "[fc00:1:1::/48]:${L4T_TREE}/tools/kernel_flash/tmp"
-  assert_line --index 7 'sudo exportfs -f'
+  assert_line --index 1 "exportfs -u [fc00:1:1::/48]:${L4T_HOST_TREE}/rootfs"
+  assert_line --index 2 "exportfs -o rw,nohide,insecure,no_subtree_check,async,no_root_squash [fc00:1:1::/48]:${L4T_HOST_TREE}/rootfs"
+  assert_line --index 4 --partial "[fc00:1:1::/48]:${L4T_HOST_TREE}/tools/kernel_flash/images"
+  assert_line --index 6 --partial "[fc00:1:1::/48]:${L4T_HOST_TREE}/tools/kernel_flash/tmp"
+  assert_line --index 7 'exportfs -f'
   assert_line --index 8 'nm_flash_guard.sh auto'
   assert_line --index 9 'make run -- -t flash'
 }
@@ -436,13 +441,29 @@ EOF
 
 @test "status warns when a host rpc.mountd runs but the L4T tree is not exported — the #101 hang" {
   printf 'hardware:\n  board: agx-orin\nstorage:\n  device: emmc\nuser:\n  password: s3cret\n' >"${L4T_REPO_ROOT}/jetson.yaml"
+  # Export table (real format) with only rootfs in it.
+  printf '%s/rootfs\tfc00:1:1::/48(rw,async,no_root_squash)\n' "${L4T_HOST_TREE}" >"${BATS_TEST_TMPDIR}/etab"
   MOUNTD=1 LSUSB_OUT="${REC}" run "${JETSON}" status
   assert_success
   assert_output --partial '⚠'
   assert_output --partial 'rpc.mountd'
   assert_output --partial 'not exporting'
+  assert_output --partial 'kernel_flash/images: not exported'
   run cat "${CALLS}"
-  refute_output --partial 'sudo'   # status never escalates
+  refute_output --partial 'sudo'       # status never escalates
+  refute_output --partial 'exportfs'   # read from the export table, exportfs never run
+}
+
+@test "status is ✔ when the host rpc.mountd exports all three rw to the flash client" {
+  printf 'hardware:\n  board: agx-orin\nstorage:\n  device: emmc\nuser:\n  password: s3cret\n' >"${L4T_REPO_ROOT}/jetson.yaml"
+  local p
+  for p in rootfs tools/kernel_flash/images tools/kernel_flash/tmp; do
+    printf '%s/%s\tfc00:1:1::/48(rw,async,no_root_squash)\n' "${L4T_HOST_TREE}" "${p}" >>"${BATS_TEST_TMPDIR}/etab"
+  done
+  MOUNTD=1 LSUSB_OUT="${REC}" run "${JETSON}" status
+  assert_success
+  refute_output --partial 'not exporting'
+  assert_output --partial 'exported rw to fc00:1:1::/48'
 }
 
 @test "status is quiet about NFS when the host has no rpc.mountd (the container serves NFS itself)" {
