@@ -28,14 +28,14 @@ git clone https://github.com/ycpss91255-docker/jetson_sdk_manager.git   # 要用
 cd jetson_sdk_manager
 
 ./jetson status      # 哪些就緒、哪些沒有——把 ✘ 的先處理掉
-./jetson prepare     # host 設定(問一次 sudo)+ 下載 BSP + 產生燒錄映像。約 30 分,不需接板子
-#   → 讓 Jetson 進 recovery:見下一節
+#   → 先讓 Jetson 進 recovery:見下一節(prepare 的最後一步要透過 USB 讀板子的 ID)
+./jetson prepare     # host 設定(問一次 sudo)+ 下載 BSP + 產生燒錄映像。約 30 分
 ./jetson flash       # 透過 USB 寫入。約 10 分
 ```
 
-`./jetson all` 會連跑三步,中間停下來等你把板子進 recovery。`./jetson` 做的每一件事都是普通的 script 或 `make` target——見[深入了解](#深入了解)。
+`./jetson all` 會先等板子出現在 recovery,再連跑 prepare 與 flash。`./jetson` 做的每一件事都是普通的 script 或 `make` target——見[深入了解](#深入了解)。
 
-需要什麼:x86_64 Linux host + Docker(不用 `sudo` 就能跑)、一條 USB-C 線、約 20 GB 空間、第一次約 40 分鐘(之後會略過下載與已完成步驟)。repo 放在 NTFS / exFAT 上也可以——`prepare` 會處理([怎麼做](#前置需求))。
+需要什麼:x86_64 Linux host + Docker(不用 `sudo` 就能跑)、一條 USB-C 線、約 20 GB 空間、第一次約 40 分鐘(之後會略過下載與已完成步驟)。整個過程板子都要在 recovery:prepare 最後一步會從板子 EEPROM 讀 board spec(ID / SKU / revision),flash 則寫入它。repo 放在 NTFS / exFAT 上也可以——`prepare` 會處理([怎麼做](#前置需求))。
 
 ## 進入 recovery(REC)模式
 
@@ -77,7 +77,7 @@ Jetson 的 Boot ROM 只在 **Force Recovery**(「REC」/「APX」/「RCM」都�
 | `0955:7020 … L4T (Linux for Tegra) running on Tegra` | 已開機進 OS——重做一次 |
 | 沒有 | 沒偵測到——換線 / 換孔 / 不經 hub;確認線接在按鍵旁邊那個孔 |
 
-Recovery 走 USB 2.0,是正常的。板子會一直停在 recovery 直到斷電,所以先進 recovery、晚點再燒沒問題。官方照片與完整按鍵說明見 NVIDIA [Jetson AGX Orin Developer Kit User Guide](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) 與 [Jetson Linux Quick Start](https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/IN/QuickStart.html)(「To Flash the Jetson Developer Kit Operating Software」—「force recovery mode」)。
+Recovery 走 USB 2.0,是正常的。板子會一直停在 recovery 直到斷電,所以在 `./jetson prepare` 前進一次就放著。若某一步以 `ERROR: might be timeout in USB write` 結束,是 Boot ROM 的 USB endpoint 被上次中斷的嘗試卡住——重新上電進 recovery 再跑一次(prepare 會從停下的地方續跑)。官方照片與完整按鍵說明見 NVIDIA [Jetson AGX Orin Developer Kit User Guide](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) 與 [Jetson Linux Quick Start](https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/IN/QuickStart.html)(「To Flash the Jetson Developer Kit Operating Software」—「force recovery mode」)。
 
 ## 燒錄之後
 
@@ -192,6 +192,5 @@ cd .. && rm -rf jetson_sdk_manager
 ## 深入了解
 
 - **[doc/ARCHITECTURE.md](ARCHITECTURE.md)** — 每個 `./jetson` 指令底層跑什麼、`host_setup.sh` 逐步說明、Docker stages、兩條燒錄路徑(工廠燒錄 vs. SDK Manager `cli` / `gui`)、持久化資料、build 圖、目錄結構。
-- **[doc/Flash_Workflow.md](Flash_Workflow.md)** — `prepare` / `flash` 兩階段細節。
 - **[doc/test/TEST.md](test/TEST.md)** — CI 證明了什麼(build、lint、bats、真的 loop-mount lane)、只有硬體能證明什麼(各 preset 驗證狀態:`agx-orin-emmc` 2026-06 實機驗證;其餘僅設定驗證)。
 - **[doc/adr/](adr/)** — 架構決策;**[doc/changelog/CHANGELOG.md](changelog/CHANGELOG.md)**。

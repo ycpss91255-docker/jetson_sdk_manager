@@ -335,7 +335,6 @@ jetson_sdk_manager/
 │   ├── adr/                     # 架构决策记录
 │   ├── changelog/CHANGELOG.md
 │   ├── test/TEST.md
-│   ├── Flash_Workflow.md        # prepare/flash 阶段深入说明
 │   ├── README.zh-TW.md
 │   ├── README.zh-CN.md
 │   └── README.ja.md

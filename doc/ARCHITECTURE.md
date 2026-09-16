@@ -9,7 +9,7 @@ How the repo is put together. For *using* it, see the [README](../README.md).
 | `./jetson …` | Runs |
 |---|---|
 | `status` | `lib/status.sh` checks + `lsusb -d 0955:` (same PID list as `script/probe.sh`) |
-| `prepare` | `sudo -v` → `./script/host_setup.sh` → `./script/init_data_dirs.sh` → `make run -- -t prepare` (auto-builds the image) |
+| `prepare` | preflight (a Jetson in recovery, unless `--no-board`) → `sudo -v` → `./script/host_setup.sh` → `./script/init_data_dirs.sh` → `make run -- -t prepare` (auto-builds the image) |
 | `wait-rec` | polls `lsusb` for a recovery PID |
 | `flash` | preflight (recovery PID, `images` phase in `.prepared.yaml`) → `./script/nm_flash_guard.sh auto` → `make run -- -t flash` |
 | `teardown` | `./script/host_teardown.sh` |
@@ -45,7 +45,7 @@ On a NetworkManager host, NM DHCP-probes the Jetson's USB gadget interface mid-f
 |---|---|---|
 | `devel` | Flash tooling (`l4t_initrd_flash.sh` dependencies). Default `make build` target. | No |
 | `devel-test` | Lint (`shellcheck` + `hadolint`) + bats smoke tests. CI-only. | No |
-| `prepare` | Phase 1 — download BSP + sample rootfs, `apply_binaries.sh`, `l4t_create_default_user.sh`, `l4t_initrd_flash --no-flash`. | No |
+| `prepare` | Phase 1 — download BSP + sample rootfs, `apply_binaries.sh`, `l4t_create_default_user.sh`, `l4t_initrd_flash --no-flash`. | **Yes, in recovery** — the last step reads the board spec from the EEPROM (unless `BOARDID FAB BOARDSKU BOARDREV` are exported) |
 | `flash` | Phase 2 — `l4t_initrd_flash --flash-only`. | **Yes**, in APX recovery |
 | `probe` | Diagnostic. Scans USB for NVIDIA vendor `0955`, annotates each device with recovery vs not, exits non-zero unless at least one Jetson is in APX. Run before flash to confirm the link without committing to a full flash. | Recommended |
 | `sdkm-base` | Shared SDK Manager layer (`sdkmanager` + `iptables` + `dnsutils`) for `cli` / `gui`. Not run directly. Keeps `devel` slim. | No |
@@ -150,7 +150,6 @@ jetson_sdk_manager/
 │   ├── test/TEST.md
 │   ├── ARCHITECTURE.md          # this file
 │   ├── TROUBLESHOOTING.md       # every known failure, with the fix
-│   ├── Flash_Workflow.md        # Deep-dive into the prepare/flash phases
 │   ├── README.zh-TW.md
 │   ├── README.zh-CN.md
 │   └── README.ja.md
