@@ -137,6 +137,9 @@ cmd_flash() {
   fi
   _ok "flash images present (prepare completed)"
 
+  # nm_flash_guard.sh writes a NetworkManager conf.d file, so it needs root:
+  # ask once here, up front, instead of failing mid-way without a tty.
+  _sudo_once
   _say "flash — guarding NetworkManager for the USB link"
   "${NM_GUARD_BIN}" auto
   _say "flash — writing images (make run -- -t flash)"
