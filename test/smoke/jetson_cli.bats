@@ -47,7 +47,7 @@ EOF
   export PATH="${STUB_BIN}:${PATH}"
 
   # Sibling scripts jetson.sh calls by path: point them at loggers.
-  for s in host_setup.sh init_data_dirs.sh nm_flash_guard.sh host_teardown.sh clean.sh; do
+  for s in host_setup.sh init_data_dirs.sh nm_flash_guard.sh usb_ss_guard.sh host_teardown.sh clean.sh; do
     cat >"${BATS_TEST_TMPDIR}/${s}" <<EOF
 #!/usr/bin/env bash
 printf '${s} %s\n' "\$*" >>"\${CALLS}"
@@ -57,6 +57,7 @@ EOF
   export HOST_SETUP_BIN="${BATS_TEST_TMPDIR}/host_setup.sh"
   export INIT_DATA_DIRS_BIN="${BATS_TEST_TMPDIR}/init_data_dirs.sh"
   export NM_GUARD_BIN="${BATS_TEST_TMPDIR}/nm_flash_guard.sh"
+  export USB_SS_GUARD_BIN="${BATS_TEST_TMPDIR}/usb_ss_guard.sh"
   export HOST_TEARDOWN_BIN="${BATS_TEST_TMPDIR}/host_teardown.sh"
   export CLEAN_BIN="${BATS_TEST_TMPDIR}/clean.sh"
 
@@ -120,6 +121,15 @@ EOF
   run grep -vE '^(lsusb|sudo)' "${CALLS}"
   assert_line --index 0 'nm_flash_guard.sh auto'
   assert_line --index 1 'make run -- -t flash'
+}
+
+@test "flash order is nm_flash_guard auto → usb_ss_guard auto → make run -t flash (#100)" {
+  LSUSB_OUT="${REC}" run "${JETSON}" flash
+  assert_success
+  run grep -vE '^(lsusb|sudo)' "${CALLS}"
+  assert_line --index 0 'nm_flash_guard.sh auto'
+  assert_line --index 1 'usb_ss_guard.sh auto'
+  assert_line --index 2 'make run -- -t flash'
 }
 
 @test "flash refuses when prepare has not recorded the images phase" {
