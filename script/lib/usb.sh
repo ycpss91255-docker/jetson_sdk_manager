@@ -23,6 +23,13 @@ JETSON_RECOVERY_PIDS=('7023' '7223' '7423' '7523' '7e19')
 # nm_flash_guard.sh's auto mode watches for this PID to flip NM back on.
 JETSON_BOOTED_PID='7020'
 
+# Flash-initrd device-mode PID. During l4t_initrd_flash the board leaves RCM
+# and re-enumerates as this (RNDIS gadget, "Linux for Tegra") until the
+# flash finishes and it reboots into JETSON_BOOTED_PID. usb_ss_guard.sh
+# anchors on it when the guard is applied mid-flash (#100).
+# shellcheck disable=SC2034  # consumed by usb_ss_guard.sh, not in this file
+JETSON_INITRD_PID='7035'
+
 # jetson_pid_is_recovery <pid>
 # Echoes nothing; returns 0 when the PID is in the recovery list.
 # Case-folds the input so an uppercase hex PID (e.g. 7E19 from some
