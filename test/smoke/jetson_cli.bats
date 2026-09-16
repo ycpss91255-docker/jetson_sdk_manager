@@ -117,9 +117,9 @@ EOF
   LSUSB_OUT="${REC}" run "${JETSON}" flash
   assert_success
   assert_output --partial '192.168.55.1'
-  run cat "${CALLS}"
-  assert_line --index 1 'nm_flash_guard.sh auto'
-  assert_line --index 2 'make run -- -t flash'
+  run grep -vE '^(lsusb|sudo)' "${CALLS}"
+  assert_line --index 0 'nm_flash_guard.sh auto'
+  assert_line --index 1 'make run -- -t flash'
 }
 
 @test "flash refuses when prepare has not recorded the images phase" {
@@ -364,4 +364,12 @@ EOF
   assert_line --index 2 'make run -- -t prepare'
   assert_line --index 3 'nm_flash_guard.sh auto'
   assert_line --index 4 'make run -- -t flash'
+}
+
+@test "flash validates sudo once before the NetworkManager guard (nm_flash_guard needs root)" {
+  LSUSB_OUT="${REC}" run "${JETSON}" flash
+  assert_success
+  run grep -v '^lsusb' "${CALLS}"
+  assert_line --index 0 --regexp '^sudo (-n )?-v$'
+  assert_line --index 1 'nm_flash_guard.sh auto'
 }
