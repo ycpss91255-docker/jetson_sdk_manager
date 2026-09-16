@@ -77,20 +77,29 @@ _phase_done() {
   status_phase_done "${markers}" "$1"
 }
 
-# _recovery_line — the lsusb line of THE Jetson in recovery. Exactly one:
-# with two boards in recovery the flash tool picks whichever enumerates
-# first, which is not a choice anyone made, so refuse.
+# _recovery_line — the lsusb line of THE Jetson in recovery.
+#   returns 0 and prints the line  — exactly one board
+#   returns 1                      — none (wait-rec may keep polling)
+#   returns 2 and prints the list  — more than one: the flash tool would pick
+#                                    whichever enumerates first, which is not
+#                                    a choice anyone made. Callers must stop.
+# Runs inside $(...), so it must not `exit`; the caller acts on the code.
 _recovery_line() {
   local lines n
   lines="$(status_recovery_lines)"
   n="$(printf '%s\n' "${lines}" | grep -c . || true)"
   case "${n}" in
     0) return 1 ;;
-    1) printf '%s\n' "${lines}" ;;
-    *) _bad "${n} Jetsons in recovery on the USB bus — disconnect all but the one to flash"
-       printf '%s\n' "${lines}" | sed 's/^/      /' >&2
-       exit 1 ;;
+    1) printf '%s\n' "${lines}"; return 0 ;;
+    *) printf '%s\n' "${lines}"; return 2 ;;
   esac
+}
+
+# _die_multiple_recovery <lines>
+_die_multiple_recovery() {
+  _bad "$(printf '%s\n' "$1" | grep -c .) Jetsons in recovery on the USB bus — disconnect all but the one to flash"
+  printf '%s\n' "$1" | sed 's/^/      /' >&2
+  exit 1
 }
 
 _rec_instructions() {
@@ -107,11 +116,13 @@ REC
 
 cmd_flash() {
   _say "flash — preflight"
-  local rec
-  if ! rec="$(_recovery_line)"; then
-    _rec_instructions
-    _die "no Jetson in recovery on the USB bus" "run ./jetson wait-rec, then ./jetson flash again"
-  fi
+  local rec rc=0
+  rec="$(_recovery_line)" || rc=$?
+  case "${rc}" in
+    2) _die_multiple_recovery "${rec}" ;;
+    1) _rec_instructions
+       _die "no Jetson in recovery on the USB bus" "run ./jetson wait-rec, then ./jetson flash again" ;;
+  esac
   _ok "Jetson in recovery: ${rec}"
   local nmarkers
   nmarkers="$(status_markers | grep -c . || true)"
@@ -172,12 +183,13 @@ cmd_wait_rec() {
   # behind. Deadline is wall-clock (SECONDS), not a sum of sleeps.
   (
     trap 'printf "\n[jetson] wait-rec interrupted\n" >&2; exit 130' INT
-    local rec start=${SECONDS} remaining nap
+    local rec rc start=${SECONDS} remaining nap
     while :; do
-      if rec="$(_recovery_line)"; then
-        _ok "Jetson in recovery: ${rec}"
-        exit 0
-      fi
+      rc=0; rec="$(_recovery_line)" || rc=$?
+      case "${rc}" in
+        0) _ok "Jetson in recovery: ${rec}"; exit 0 ;;
+        2) _die_multiple_recovery "${rec}" ;;
+      esac
       if (( timeout > 0 )); then
         remaining=$(( timeout - (SECONDS - start) ))
         if (( remaining <= 0 )); then

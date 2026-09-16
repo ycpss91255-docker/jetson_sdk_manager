@@ -313,3 +313,18 @@ EOF
   assert_failure 2
   [[ ! -e "${CALLS}" ]]
 }
+
+@test "wait-rec fails immediately (no polling loop) when two Jetsons are in recovery" {
+  LSUSB_OUT=$'Bus 003 Device 049: ID 0955:7023 NVIDIA Corp. APX\nBus 001 Device 007: ID 0955:7523 NVIDIA Corp. APX' \
+    WAIT_REC_INTERVAL=0.05 run "${JETSON}" wait-rec 0
+  assert_failure 1
+  assert_output --partial '2 Jetsons in recovery'
+  refute_output --partial 'timed out'
+  [[ "$(grep -c '^lsusb' "${CALLS}")" -le 5 ]]     # one probe, not a loop (jetson_list_devices calls lsusb once per PID)
+}
+
+@test "flash with two Jetsons in recovery does not also claim 'no Jetson in recovery'" {
+  LSUSB_OUT=$'Bus 003 Device 049: ID 0955:7023 NVIDIA Corp. APX\nBus 001 Device 007: ID 0955:7523 NVIDIA Corp. APX' run "${JETSON}" flash
+  assert_failure 1
+  refute_output --partial 'no Jetson in recovery'
+}
