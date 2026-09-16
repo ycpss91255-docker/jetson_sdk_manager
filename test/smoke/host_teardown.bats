@@ -221,3 +221,27 @@ EOF
   run cat "${UMOUNT_LOG}"
   assert_output "${L4T_EXPORT_DIR}"   # only /srv
 }
+
+# ── host NFS export (#101) ───────────────────────────────────────────
+
+@test "host_teardown unexports the L4T tree from the host NFS server BEFORE unmounting /srv" {
+  EXPORTFS_LOG="${BATS_TEST_TMPDIR}/exportfs.log"; export EXPORTFS_LOG
+  cat >"${STUB_BIN}/exportfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'exportfs %s\n' "$*" >>"${EXPORTFS_LOG}"
+EOF
+  chmod +x "${STUB_BIN}/exportfs"
+  local rel="JetPack_6.2.2_Linux_jetson-agx-orin-devkit/Linux_for_Tegra"
+  mkdir -p "${STORE_DATA}/${rel}"
+  : >"${STORE_DATA}/${rel}/.prepared.yaml"
+  run "${HOST_TEARDOWN}"
+  assert_success
+  run cat "${EXPORTFS_LOG}"
+  assert_line --index 0 "exportfs -u [fc00:1:1::/48]:${L4T_EXPORT_DIR}/${rel}/rootfs"
+  assert_line --index 1 "exportfs -u [fc00:1:1::/48]:${L4T_EXPORT_DIR}/${rel}/tools/kernel_flash/images"
+  assert_line --index 2 "exportfs -u [fc00:1:1::/48]:${L4T_EXPORT_DIR}/${rel}/tools/kernel_flash/tmp"
+  assert_line --index 3 'exportfs -f'
+  # The kernel nfsd pins an exported directory: unexport first, or the
+  # bridge umount fails with "target is busy".
+  [[ "${output#*unexported}" == *"Unmounting the NFS export bridge"* ]]
+}

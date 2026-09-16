@@ -402,3 +402,51 @@ EOF
   run cat "${MOUNT_LOG}"
   assert_line --index 0 --partial "--bind ${BATS_TEST_TMPDIR}/cwd/rel/store "
 }
+
+# ── step 6: host NFS export (#101) ───────────────────────────────────
+
+# exportfs stub on PATH (sudo passes through), logging argv.
+_stub_exportfs() {
+  EXPORTFS_LOG="${BATS_TEST_TMPDIR}/exportfs.log"; export EXPORTFS_LOG
+  cat >"${STUB_BIN}/exportfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'exportfs %s\n' "$*" >>"${EXPORTFS_LOG}"
+EOF
+  chmod +x "${STUB_BIN}/exportfs"
+}
+
+# A prepared tree under data/ plus the /srv bridge as a symlink (the bind is
+# stubbed), so the HOST-namespace export paths exist. Echoes the host path.
+_prepared_tree() {
+  local rel="JetPack_6.2.2_Linux_jetson-agx-orin-devkit/Linux_for_Tegra"
+  mkdir -p "${L4T_EXPORT_SRC}/${rel}/rootfs" "${L4T_EXPORT_SRC}/${rel}/tools/kernel_flash/images"
+  printf 'jetpack_version: "6.2.2"\nphases: [bsp, rootfs, binaries, user, images]\n' >"${L4T_EXPORT_SRC}/${rel}/.prepared.yaml"
+  mkdir -p "$(dirname "${L4T_EXPORT_DIR}")"
+  ln -s "${L4T_EXPORT_SRC}" "${L4T_EXPORT_DIR}"
+  printf '%s/%s' "${L4T_EXPORT_DIR}" "${rel}"
+}
+
+@test "host_setup exports the prepared L4T tree from the host NFS server after the /srv bridge (#101)" {
+  _stub_exportfs
+  local l4t
+  l4t="$(_prepared_tree)"
+  run "${HOST_SETUP}"
+  assert_success
+  # The bridge (step 5) comes before the export (step 6): the export paths
+  # are the host-namespace ones the bridge provides.
+  [[ "${output#*Bridging}" == *"exported to fc00:1:1::/48"* ]]
+  run cat "${EXPORTFS_LOG}"
+  assert_line --partial "exportfs -o rw,nohide,insecure,no_subtree_check,async,no_root_squash [fc00:1:1::/48]:${l4t}/rootfs"
+  assert_line --partial "[fc00:1:1::/48]:${l4t}/tools/kernel_flash/images"
+  assert_line --partial "[fc00:1:1::/48]:${l4t}/tools/kernel_flash/tmp"
+  assert_line 'exportfs -f'
+}
+
+@test "host_setup says so and skips the export when no L4T tree is prepared yet" {
+  _stub_exportfs
+  run "${HOST_SETUP}"
+  assert_success
+  assert_output --partial 'not prepared'
+  assert_output --partial 'flash'
+  [[ ! -e "${EXPORTFS_LOG}" ]]
+}
