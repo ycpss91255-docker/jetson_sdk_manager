@@ -124,11 +124,91 @@ cmd_flash() {
 NEXT
 }
 
+# _sudo_once — one password prompt up front instead of one per sub-step.
+# Non-interactive callers (CI, cron) get a fast failure rather than a hang.
+_sudo_once() {
+  if [[ -t 0 ]]; then
+    sudo -v || _die "sudo is required for the host setup steps" "run this from a terminal where you can enter your password"
+  else
+    sudo -n -v 2>/dev/null || _die "sudo needs a password but there is no terminal to ask on" "run ./jetson prepare interactively once (sudo caches the credential)"
+  fi
+}
+
+cmd_prepare() {
+  _say "prepare — host setup (needs sudo once)"
+  _sudo_once
+  "${HOST_SETUP_BIN}" || _die "host_setup.sh failed — fix what it reported, then re-run ./jetson prepare"
+  "${INIT_DATA_DIRS_BIN}" || _die "init_data_dirs.sh failed"
+  _say "prepare — download BSP + build flash images (make run -- -t prepare, ~30 min first time)"
+  (cd "${_REPO}" && make run -- -t prepare) || _die "prepare failed — see the log above" "fix the cause, then re-run ./jetson prepare (it resumes where it stopped)"
+  _say "prepare — done. Next: put the board in REC, then ./jetson flash"
+}
+
+# cmd_wait_rec [seconds] — 0 = wait forever. Ctrl-C exits 130 and changes
+# nothing (this command never touches NM or mounts).
+cmd_wait_rec() {
+  local timeout="${1:-300}" interval="${WAIT_REC_INTERVAL:-2}" waited=0 rec
+  [[ "${timeout}" =~ ^[0-9]+$ ]] || { printf 'jetson: wait-rec expects a number of seconds, got: %s\n' "${timeout}" >&2; exit 2; }
+  trap 'printf "\n[jetson] wait-rec interrupted\n" >&2; exit 130' INT
+  _say "wait-rec — waiting for a Jetson in recovery (timeout: ${timeout}s, 0 = forever)"
+  _rec_instructions
+  while :; do
+    if rec="$(_recovery_line)"; then
+      _ok "Jetson in recovery: ${rec}"
+      return 0
+    fi
+    if (( timeout > 0 )) && awk -v w="${waited}" -v t="${timeout}" 'BEGIN{exit !(w>=t)}'; then
+      _die "timed out after ${timeout}s — no Jetson in recovery" "check the cable is on the FRONT USB-C port, redo the REC sequence, then ./jetson wait-rec"
+    fi
+    sleep "${interval}"
+    waited="$(awk -v w="${waited}" -v i="${interval}" 'BEGIN{print w+i}')"
+  done
+}
+
+cmd_all() {
+  _say "[1/3] prepare"
+  cmd_prepare
+  _say "[2/3] wait for recovery"
+  cmd_wait_rec "${1:-0}"
+  _say "[3/3] flash"
+  cmd_flash
+}
+
+cmd_teardown() {
+  _say "teardown — restoring the host (host_teardown.sh)"
+  "${HOST_TEARDOWN_BIN}"
+}
+
+cmd_purge() {
+  local yes="" keep=() arg
+  for arg in "$@"; do
+    case "${arg}" in
+      --yes|-y) yes=1 ;;
+      --keep-downloads) keep+=("--keep-downloads") ;;
+      *) printf 'jetson: purge: unknown option %s\n' "${arg}" >&2; exit 2 ;;
+    esac
+  done
+  if [[ -z "${yes}" ]]; then
+    printf '[jetson] purge removes the L4T tree, the data store image, the marker%s.\n' \
+      "$([[ ${#keep[@]} -eq 0 ]] && printf ' and the cached tarballs')" >&2
+    printf '         Type "yes" to continue: ' >&2
+    local answer=""
+    read -r answer || true
+    [[ "${answer}" == "yes" ]] || { printf '[jetson] purge aborted\n' >&2; exit 1; }
+  fi
+  "${CLEAN_BIN}" purge "${keep[@]}"
+}
+
 main() {
   local cmd="${1:-}"
   [[ $# -gt 0 ]] && shift
   case "${cmd}" in
+    prepare)  cmd_prepare "$@" ;;
+    wait-rec) cmd_wait_rec "$@" ;;
     flash)    cmd_flash "$@" ;;
+    all)      cmd_all "$@" ;;
+    teardown) cmd_teardown "$@" ;;
+    purge)    cmd_purge "$@" ;;
     ""|-h|--help|help) _usage; [[ -z "${cmd}" || "${cmd}" == "help" || "${cmd}" == -* ]] && exit 0 ;;
     *) printf 'jetson: unknown command: %s\n\n' "${cmd}" >&2; _usage; exit 2 ;;
   esac
