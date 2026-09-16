@@ -15,9 +15,9 @@
 #   4. USB autosuspend        — restore the kernel default (2)
 #   5. NetworkManager guard   — remove the flash-unmanaged file and stop a
 #                               running `nm_flash_guard auto` watcher
-#   6. USB SuperSpeed guard   — re-enable the SS half of the Jetson's
-#                               connector (#100) and stop a running
-#                               `usb_ss_guard auto` watcher
+#   6. USB SuperSpeed guard   — `usb_ss_guard.sh enable`: stops its own
+#                               `auto` watcher and re-enables the SS half
+#                               of the Jetson's connector (#100)
 #
 # What it does NOT undo: the QEMU binfmt registration (harmless to leave) and
 # the nfsd kernel module (other services may rely on it; unloading is risky).
@@ -57,10 +57,9 @@ NM_GUARD_BIN="${NM_GUARD_BIN:-${_HERE}/nm_flash_guard.sh}"
 # `auto` watcher (it re-enables NM on its own, but a same-boot teardown wants
 # it gone now rather than after its timeout).
 NM_GUARD_PIDFILE="${NM_GUARD_PIDFILE:-${TMPDIR:-/tmp}/nm-jetson-flash-guard.pid}"
-# usb_ss_guard.sh (#100): same shape — `enable` restores the port it
-# recorded; the pidfile default mirrors the script's.
+# usb_ss_guard.sh (#100): `enable` stops its own watcher (verified through
+# /proc) and restores the port it recorded, so no state path is known here.
 USB_SS_GUARD_BIN="${USB_SS_GUARD_BIN:-${_HERE}/usb_ss_guard.sh}"
-USB_SS_GUARD_PIDFILE="${USB_SS_GUARD_PIDFILE:-/tmp/usb-ss-guard.pid}"
 
 _step() { printf '\n\033[36m[host-teardown] %s\033[0m\n' "$1" >&2; }
 _ok()   { printf '  ok: %s\n' "$1" >&2; }
@@ -133,17 +132,8 @@ main() {
   fi
 
   _step "6/6 Re-enabling the SuperSpeed half of the Jetson's USB connector"
-  # Same dance as 5/6: stop a running `usb_ss_guard auto` watcher, then
-  # `enable` (a no-op without a state file).
-  if [[ -e "${USB_SS_GUARD_PIDFILE}" ]]; then
-    local _spid
-    _spid="$(cat "${USB_SS_GUARD_PIDFILE}" 2>/dev/null || true)"
-    if [[ -n "${_spid}" ]] && kill -0 "${_spid}" 2>/dev/null; then
-      kill "${_spid}" 2>/dev/null || true
-      _ok "stopped usb_ss_guard auto watcher (PID ${_spid})"
-    fi
-    rm -f "${USB_SS_GUARD_PIDFILE}" 2>/dev/null || true
-  fi
+  # `enable` stops a running `auto` watcher itself (only a PID /proc
+  # confirms is a usb_ss_guard watcher) and is a no-op without state.
   if [[ -x "${USB_SS_GUARD_BIN}" ]]; then
     "${USB_SS_GUARD_BIN}" enable
   else
