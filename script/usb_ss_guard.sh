@@ -432,6 +432,7 @@ _watch() {
 _spawn() {
   local _i
   _validate_timeout "$1" '_spawn timeout'
+  _validate_timeout "${POLL_INTERVAL}" 'USB_SS_GUARD_POLL_INTERVAL'
   setsid bash "${BASH_SOURCE[0]}" _watch "$1" "$2" >/dev/null 2>&1 </dev/null &
   disown $! 2>/dev/null || true
   for _i in $(seq 1 20); do
@@ -445,15 +446,17 @@ _spawn() {
 # the port as soon as the board boots. Nothing disabled → no watcher.
 auto() {
   local timeout="${AUTO_TIMEOUT_DEFAULT}" token rec
+  # The environment is checked first and unconditionally: a bad value there
+  # means the environment is polluted, and a command-line timeout must not
+  # paper over it.
+  _validate_timeout "${AUTO_TIMEOUT_DEFAULT}" 'USB_SS_GUARD_TIMEOUT'
+  _validate_timeout "${POLL_INTERVAL}" 'USB_SS_GUARD_POLL_INTERVAL'
   if (( $# > 1 )); then
     printf 'Usage: %s auto [timeout]\n' "$0" >&2; return 2
   elif (( $# == 1 )); then
     timeout="$1"
     _validate_timeout "${timeout}" 'auto timeout'
-  else
-    _validate_timeout "${timeout}" 'USB_SS_GUARD_TIMEOUT'
   fi
-  _validate_timeout "${POLL_INTERVAL}" 'USB_SS_GUARD_POLL_INTERVAL'
   # One watcher at a time: a previous `auto` still polling would race this
   # one for the port (and its token no longer matches after disable anyway).
   _stop_watcher
