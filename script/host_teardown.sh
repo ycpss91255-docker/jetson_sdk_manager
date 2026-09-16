@@ -6,16 +6,21 @@
 # boot, instead of waiting for a reboot. It undoes, in reverse, what
 # host_setup.sh + nm_flash_guard.sh + usb_ss_guard.sh changed:
 #
-#   1. /srv/jetson_l4t bind   — unmount the NFS export bridge (host_setup 5/6)
+#   1. host NFS export        — unexport the L4T tree from the host
+#                               nfs-kernel-server (host_setup 6/7, #101). First,
+#                               because the kernel nfsd pins an exported
+#                               directory and the bridge umount below would
+#                               fail with "target is busy"
+#   2. /srv/jetson_l4t bind   — unmount the NFS export bridge (host_setup 5/7)
 #                               and drop the empty directory it lived in
-#   2. data/jetson_l4t store  — unmount the in-repo ext4 image / bind (#93,
-#                               host_setup 0/6). The image and its marker
+#   3. data/jetson_l4t store  — unmount the in-repo ext4 image / bind (#93,
+#                               host_setup 0/7). The image and its marker
 #                               stay; `clean.sh purge` is what deletes them.
-#   3. usbfs_memory_mb        — restore the kernel default (16 MB)
-#   4. USB autosuspend        — restore the kernel default (2)
-#   5. NetworkManager guard   — remove the flash-unmanaged file and stop a
+#   4. usbfs_memory_mb        — restore the kernel default (16 MB)
+#   5. USB autosuspend        — restore the kernel default (2)
+#   6. NetworkManager guard   — remove the flash-unmanaged file and stop a
 #                               running `nm_flash_guard auto` watcher
-#   6. USB SuperSpeed guard   — `usb_ss_guard.sh enable`: stops its own
+#   7. USB SuperSpeed guard   — `usb_ss_guard.sh enable`: stops its own
 #                               `auto` watcher and re-enables the SS half
 #                               of the Jetson's connector (#100)
 #
@@ -38,6 +43,11 @@ L4T_REPO_ROOT="${L4T_REPO_ROOT:-${_REPO}}"
 L4T_STORE_DATA_DIR="${L4T_REPO_ROOT}/data/jetson_l4t"
 L4T_STORE_MARKER="${L4T_REPO_ROOT}/data/.l4t_store"
 
+# shellcheck source=lib/errors.sh
+. "${_HERE}/lib/errors.sh"
+# shellcheck source=lib/nfs_export.sh
+. "${_HERE}/lib/nfs_export.sh"
+
 # Overridable for tests; defaults are the real kernel sysfs paths / tools.
 USBCORE_PARAMS="${USBCORE_PARAMS:-/sys/module/usbcore/parameters}"
 # Kernel defaults host_setup.sh overrode. autosuspend defaults to 2 (seconds);
@@ -46,7 +56,7 @@ USBCORE_PARAMS="${USBCORE_PARAMS:-/sys/module/usbcore/parameters}"
 # boot-reset anyway). Overridable so a site with a different baseline can adjust.
 USBCORE_AUTOSUSPEND_DEFAULT="${USBCORE_AUTOSUSPEND_DEFAULT:-2}"
 USBFS_MEMORY_MB_DEFAULT="${USBFS_MEMORY_MB_DEFAULT:-16}"
-# NFS export bridge (host_setup 5/5). Must match host_setup.sh's L4T_EXPORT_DIR.
+# NFS export bridge (host_setup 5/7). Must match host_setup.sh's L4T_EXPORT_DIR.
 L4T_EXPORT_DIR="${L4T_EXPORT_DIR:-/srv/jetson_l4t}"
 UMOUNT_BIN="${UMOUNT_BIN:-umount}"
 MOUNTPOINT_BIN="${MOUNTPOINT_BIN:-mountpoint}"
@@ -64,8 +74,25 @@ USB_SS_GUARD_BIN="${USB_SS_GUARD_BIN:-${_HERE}/usb_ss_guard.sh}"
 _step() { printf '\n\033[36m[host-teardown] %s\033[0m\n' "$1" >&2; }
 _ok()   { printf '  ok: %s\n' "$1" >&2; }
 
+# _unexport_l4t_trees — step 1 body. Unexport every prepared tree found under
+# data/jetson_l4t (usually one; after a board switch without clean.sh there
+# may be two — unexporting both is harmless). No-op without exportfs, or when
+# nothing is prepared / the store is already down.
+_unexport_l4t_trees() {
+  local l4t n=0
+  while IFS= read -r l4t; do
+    [[ -n "${l4t}" ]] || continue
+    n=$((n+1))
+    nfs_export_off "${l4t}"
+  done < <(nfs_export_l4t_dirs)
+  (( n > 0 )) || _ok "no prepared L4T tree under data/jetson_l4t — nothing to unexport"
+}
+
 main() {
-  _step "1/6 Unmounting the NFS export bridge ${L4T_EXPORT_DIR}"
+  _step "1/7 Unexporting the L4T tree from the host NFS server (if the host runs one)"
+  _unexport_l4t_trees
+
+  _step "2/7 Unmounting the NFS export bridge ${L4T_EXPORT_DIR}"
   if "${MOUNTPOINT_BIN}" -q "${L4T_EXPORT_DIR}"; then
     sudo "${UMOUNT_BIN}" "${L4T_EXPORT_DIR}"
     _ok "${L4T_EXPORT_DIR} unmounted"
@@ -79,7 +106,7 @@ main() {
     _ok "removed empty ${L4T_EXPORT_DIR}"
   fi
 
-  _step "2/6 Unmounting the L4T data store ${L4T_STORE_DATA_DIR}"
+  _step "3/7 Unmounting the L4T data store ${L4T_STORE_DATA_DIR}"
   # Order matters: /srv is a bind OF this mount, so it had to go first.
   # umount detaches the loop device by itself (mount -o loop sets autoclear).
   if ! "${MOUNTPOINT_BIN}" -q "${L4T_STORE_DATA_DIR}"; then
@@ -94,7 +121,7 @@ main() {
     _ok "${L4T_STORE_DATA_DIR} unmounted (image + marker kept; clean.sh purge removes them)"
   fi
 
-  _step "3/6 Restoring usbfs buffer to the kernel default (${USBFS_MEMORY_MB_DEFAULT} MB)"
+  _step "4/7 Restoring usbfs buffer to the kernel default (${USBFS_MEMORY_MB_DEFAULT} MB)"
   if [[ -w "${USBCORE_PARAMS}/usbfs_memory_mb" ]] || sudo test -e "${USBCORE_PARAMS}/usbfs_memory_mb"; then
     echo "${USBFS_MEMORY_MB_DEFAULT}" | sudo tee "${USBCORE_PARAMS}/usbfs_memory_mb" >/dev/null
     _ok "usbfs_memory_mb = ${USBFS_MEMORY_MB_DEFAULT}"
@@ -102,7 +129,7 @@ main() {
     _ok "usbcore not loaded — usbfs_memory_mb left as-is (boot-reset)"
   fi
 
-  _step "4/6 Restoring USB autosuspend to the kernel default (${USBCORE_AUTOSUSPEND_DEFAULT})"
+  _step "5/7 Restoring USB autosuspend to the kernel default (${USBCORE_AUTOSUSPEND_DEFAULT})"
   if [[ -w "${USBCORE_PARAMS}/autosuspend" ]] || sudo test -e "${USBCORE_PARAMS}/autosuspend"; then
     echo "${USBCORE_AUTOSUSPEND_DEFAULT}" | sudo tee "${USBCORE_PARAMS}/autosuspend" >/dev/null
     _ok "autosuspend = ${USBCORE_AUTOSUSPEND_DEFAULT}"
@@ -110,7 +137,7 @@ main() {
     _ok "usbcore not loaded — autosuspend left as-is (boot-reset)"
   fi
 
-  _step "5/6 Restoring NetworkManager control of USB gadget interfaces"
+  _step "6/7 Restoring NetworkManager control of USB gadget interfaces"
   # Stop a running `nm_flash_guard auto` watcher first so it can't race the
   # `enable` below or re-toggle later. The watcher re-enables NM itself, but a
   # same-boot teardown wants it gone now instead of after its timeout.
@@ -131,7 +158,7 @@ main() {
     printf '  nm_flash_guard.sh not found at %s — skip NM restore\n' "${NM_GUARD_BIN}" >&2
   fi
 
-  _step "6/6 Re-enabling the SuperSpeed half of the Jetson's USB connector"
+  _step "7/7 Re-enabling the SuperSpeed half of the Jetson's USB connector"
   # `enable` stops a running `auto` watcher itself (only a PID /proc
   # confirms is a usb_ss_guard watcher) and is a no-op without state.
   if [[ -x "${USB_SS_GUARD_BIN}" ]]; then

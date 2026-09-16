@@ -236,12 +236,13 @@ EOF
   : >"${STORE_DATA}/${rel}/.prepared.yaml"
   run "${HOST_TEARDOWN}"
   assert_success
+  # The kernel nfsd pins an exported directory: unexport first, or the
+  # bridge umount fails with "target is busy".
+  assert_output --partial 'unexported'
+  [[ "${output#*unexported}" == *"Unmounting the NFS export bridge"* ]]
   run cat "${EXPORTFS_LOG}"
   assert_line --index 0 "exportfs -u [fc00:1:1::/48]:${L4T_EXPORT_DIR}/${rel}/rootfs"
   assert_line --index 1 "exportfs -u [fc00:1:1::/48]:${L4T_EXPORT_DIR}/${rel}/tools/kernel_flash/images"
   assert_line --index 2 "exportfs -u [fc00:1:1::/48]:${L4T_EXPORT_DIR}/${rel}/tools/kernel_flash/tmp"
   assert_line --index 3 'exportfs -f'
-  # The kernel nfsd pins an exported directory: unexport first, or the
-  # bridge umount fails with "target is busy".
-  [[ "${output#*unexported}" == *"Unmounting the NFS export bridge"* ]]
 }

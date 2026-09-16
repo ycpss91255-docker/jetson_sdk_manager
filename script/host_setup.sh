@@ -16,6 +16,11 @@
 #   4. usbfs_memory_mb = 2048   — stop tegrarcm / NFS bulk writes stalling
 #   5. /srv/jetson_l4t bind     — bridge the NFS export path into the host
 #                                 mount namespace (see the step-5 comment)
+#   6. host NFS export          — when the host runs its own nfs-kernel-server,
+#                                 export the prepared L4T tree from it, or the
+#                                 host's rpc.mountd answers the kernel with an
+#                                 empty /etc/exports and the board's mount.nfs
+#                                 hangs (lib/nfs_export.sh, #101)
 # NetworkManager is the other half of a reliable flash, but it is a
 # FLASH-SCOPED toggle (NM must ignore the Jetson USB gadget while flashing,
 # but manage it once the board boots so the host gets 192.168.55.100). That
@@ -42,6 +47,8 @@ L4T_REPO_ROOT="${L4T_REPO_ROOT:-${_REPO}}"
 . "${_HERE}/lib/errors.sh"
 # shellcheck source=lib/store.sh
 . "${_HERE}/lib/store.sh"
+# shellcheck source=lib/nfs_export.sh
+. "${_HERE}/lib/nfs_export.sh"
 
 # Overridable for tests; defaults are the real kernel sysfs paths / tools.
 USBCORE_PARAMS="${USBCORE_PARAMS:-/sys/module/usbcore/parameters}"
@@ -130,11 +137,24 @@ _assert_export_bind_matches() {
   exit 1
 }
 
+# _export_l4t_tree — step 6 body. Nothing to export until prepare has built
+# exactly one tree; both other cases are reported and skipped, never fatal
+# (./jetson prepare runs this script BEFORE building the tree).
+_export_l4t_tree() {
+  local l4t rc=0
+  l4t="$(nfs_export_l4t_dir)" || rc=$?
+  case "${rc}" in
+    1) _ok "L4T tree not prepared yet — nothing to export; ./jetson flash exports it once prepare has run"; return 0 ;;
+    2) _warn "more than one prepared L4T tree under data/jetson_l4t — ambiguous, not exporting; ./script/clean.sh l4t and re-run ./jetson prepare"; return 0 ;;
+  esac
+  nfs_export_on "${l4t}"
+}
+
 main() {
-  _step "0/6 L4T data store (ext4 for data/jetson_l4t)"
+  _step "0/7 L4T data store (ext4 for data/jetson_l4t)"
   store_setup "${L4T_REPO_ROOT}"
 
-  _step "1/6 Registering QEMU binfmt (ARM64 emulation for prepare)"
+  _step "1/7 Registering QEMU binfmt (ARM64 emulation for prepare)"
   if command -v "${DOCKER_BIN}" >/dev/null 2>&1; then
     "${DOCKER_BIN}" run --rm --privileged "${QEMU_IMAGE}" --reset -p yes >/dev/null
     _ok "qemu-user-static registered"
@@ -142,19 +162,19 @@ main() {
     printf '  docker not found on PATH — install Docker, then re-run\n' >&2
   fi
 
-  _step "2/6 Loading nfsd kernel module (NFS export for flash)"
+  _step "2/7 Loading nfsd kernel module (NFS export for flash)"
   sudo modprobe nfsd
   _ok "nfsd loaded"
 
-  _step "3/6 Disabling USB autosuspend (prevents mid-flash stalls)"
+  _step "3/7 Disabling USB autosuspend (prevents mid-flash stalls)"
   echo -1 | sudo tee "${USBCORE_PARAMS}/autosuspend" >/dev/null
   _ok "autosuspend = -1"
 
-  _step "4/6 Raising usbfs buffer to ${USBFS_MEMORY_MB} MB (prevents bulk-write stalls)"
+  _step "4/7 Raising usbfs buffer to ${USBFS_MEMORY_MB} MB (prevents bulk-write stalls)"
   echo "${USBFS_MEMORY_MB}" | sudo tee "${USBCORE_PARAMS}/usbfs_memory_mb" >/dev/null
   _ok "usbfs_memory_mb = ${USBFS_MEMORY_MB}"
 
-  _step "5/6 Bridging the NFS export path ${L4T_EXPORT_DIR} into the host namespace"
+  _step "5/7 Bridging the NFS export path ${L4T_EXPORT_DIR} into the host namespace"
   _assert_path_contract
   # l4t_initrd_flash serves the payload from ${L4T_EXPORT_DIR} (volume.sh
   # L4T_ROOT_DEFAULT). The container bind-mounts ./data/jetson_l4t there, but
@@ -172,6 +192,16 @@ main() {
     sudo "${MOUNT_BIN}" --bind "${L4T_EXPORT_SRC}" "${L4T_EXPORT_DIR}"
     _ok "${L4T_EXPORT_DIR} → ${L4T_EXPORT_SRC} (bind)"
   fi
+
+  _step "6/7 Exporting the L4T tree from the host NFS server (if the host runs one)"
+  # The flash container exports rootfs / images itself, but when the host
+  # also runs nfs-kernel-server its rpc.mountd answers the shared kernel
+  # nfsd's upcalls with the host's /etc/exports — empty — and the board's
+  # mount.nfs hangs (#101). Export the same paths on the host, to the same
+  # client, with NVIDIA's rw options. ./jetson flash repeats this right
+  # before every flash (a re-prepared images/ has a new file handle), so
+  # here it mostly serves people running `make run -- -t flash` by hand.
+  _export_l4t_tree
 
   cat >&2 <<'EOF'
 

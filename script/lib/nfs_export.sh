@@ -188,23 +188,36 @@ nfs_export_status() {
   fi
 }
 
+# nfs_export_l4t_dirs
+# HOST-namespace paths of every prepared L4T tree, one per line (0..n): the
+# directory of each .prepared.yaml under data/jetson_l4t (same rule as
+# lib/status.sh::status_markers), re-rooted at the /srv/jetson_l4t bridge
+# (L4T_EXPORT_DIR) — the path the kernel nfsd resolves (#52). No yq on the
+# host, so the marker's location is the source, not its contents.
+nfs_export_l4t_dirs() {
+  local repo="${L4T_REPO_ROOT:?nfs_export_l4t_dirs: L4T_REPO_ROOT unset}"
+  local export_dir="${L4T_EXPORT_DIR:-/srv/jetson_l4t}"
+  local data="${repo}/data/jetson_l4t" marker
+  while IFS= read -r marker; do
+    [[ -n "${marker}" ]] || continue
+    marker="$(dirname "${marker}")"
+    printf '%s\n' "${export_dir}/${marker#"${data}/"}"
+  done < <(find "${data}" -maxdepth 3 -name .prepared.yaml 2>/dev/null | sort)
+}
+
 # nfs_export_l4t_dir
-# The HOST-namespace path of THE prepared L4T tree: the directory of the
-# single .prepared.yaml under data/jetson_l4t, re-rooted at the
-# /srv/jetson_l4t bridge (L4T_EXPORT_DIR). The host has no yq, and this is
-# the same one-marker rule ./jetson flash gates on.
+# The HOST-namespace path of THE prepared L4T tree — the one-marker rule
+# ./jetson flash gates on.
 #   returns 0 and prints the path — exactly one prepared tree
 #   returns 1                     — none (prepare has not run)
 #   returns 2                     — more than one (ambiguous; clean.sh l4t)
 nfs_export_l4t_dir() {
-  local repo="${L4T_REPO_ROOT:?nfs_export_l4t_dir: L4T_REPO_ROOT unset}"
-  local export_dir="${L4T_EXPORT_DIR:-/srv/jetson_l4t}"
-  local data="${repo}/data/jetson_l4t" markers n
-  markers="$(find "${data}" -maxdepth 3 -name .prepared.yaml 2>/dev/null | sort)"
-  n="$(printf '%s\n' "${markers}" | grep -c . || true)"
+  local dirs n
+  dirs="$(nfs_export_l4t_dirs)"
+  n="$(printf '%s\n' "${dirs}" | grep -c . || true)"
   case "${n}" in
     0) return 1 ;;
-    1) markers="$(dirname "${markers}")"; printf '%s\n' "${export_dir}/${markers#"${data}/"}" ;;
+    1) printf '%s\n' "${dirs}" ;;
     *) return 2 ;;
   esac
 }
