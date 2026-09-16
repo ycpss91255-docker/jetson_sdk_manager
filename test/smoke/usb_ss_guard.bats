@@ -288,7 +288,7 @@ _wait_for() {
 }
 
 @test "disable treats a state file whose port is not actually disabled as stale: clears it and proceeds" {
-  mkdir -p "${STATE_DIR}"
+  mkdir -p -m 0755 "${STATE_DIR}"
   printf 'port=%s\ntoken=deadbeef\n' "${OTHER_SS_PORT}" >"${STATE}"
   run bash -c "'${GUARD_SH}' disable 2>&1"
   assert_success
@@ -301,7 +301,7 @@ _wait_for() {
 }
 
 @test "disable refuses (exit 1) a state file whose port path is not a root-hub port under USB_SYSFS" {
-  mkdir -p "${STATE_DIR}"
+  mkdir -p -m 0755 "${STATE_DIR}"
   printf 'port=%s\ntoken=deadbeef\n' "${BATS_TEST_TMPDIR}/elsewhere" >"${STATE}"
   run bash -c "'${GUARD_SH}' disable 2>&1"
   assert_failure 1
@@ -340,7 +340,7 @@ _wait_for() {
 }
 
 @test "enable refuses a state path outside USB_SYSFS (exit 1, nothing written, state kept)" {
-  mkdir -p "${STATE_DIR}" "${BATS_TEST_TMPDIR}/victim"
+  mkdir -p -m 0755 "${STATE_DIR}" "${BATS_TEST_TMPDIR}/victim"
   printf 'secret\n' >"${BATS_TEST_TMPDIR}/victim/disable"
   printf 'port=%s\ntoken=deadbeef\n' "${BATS_TEST_TMPDIR}/victim" >"${STATE}"
   run bash -c "'${GUARD_SH}' enable 2>&1"
@@ -352,7 +352,7 @@ _wait_for() {
 }
 
 @test "enable refuses a state path that is a symlink out of the port tree (exit 1, target untouched)" {
-  mkdir -p "${STATE_DIR}" "${BATS_TEST_TMPDIR}/victim"
+  mkdir -p -m 0755 "${STATE_DIR}" "${BATS_TEST_TMPDIR}/victim"
   printf 'secret\n' >"${BATS_TEST_TMPDIR}/victim/disable"
   ln -s "${BATS_TEST_TMPDIR}/victim" "${SYS}/usb2/2-0:1.0/usb2-port9"
   printf 'port=%s\ntoken=deadbeef\n' "${SYS}/usb2/2-0:1.0/usb2-port9" >"${STATE}"
@@ -364,7 +364,7 @@ _wait_for() {
 }
 
 @test "enable refuses a state path whose bus numbers disagree (usb2/3-0:1.0/usb2-port3)" {
-  mkdir -p "${STATE_DIR}" "${SYS}/usb2/3-0:1.0/usb2-port3"
+  mkdir -p -m 0755 "${STATE_DIR}" "${SYS}/usb2/3-0:1.0/usb2-port3"
   printf '1\n' >"${SYS}/usb2/3-0:1.0/usb2-port3/disable"
   printf 'port=%s\ntoken=deadbeef\n' "${SYS}/usb2/3-0:1.0/usb2-port3" >"${STATE}"
   run bash -c "'${GUARD_SH}' enable 2>&1"
@@ -374,7 +374,7 @@ _wait_for() {
 }
 
 @test "enable refuses a malformed state file (exit 1)" {
-  mkdir -p "${STATE_DIR}"
+  mkdir -p -m 0755 "${STATE_DIR}"
   printf 'garbage\n' >"${STATE}"
   run bash -c "'${GUARD_SH}' enable 2>&1"
   assert_failure 1
@@ -382,7 +382,7 @@ _wait_for() {
 }
 
 @test "enable with a stale state (port already enabled) clears it with a message (exit 0)" {
-  mkdir -p "${STATE_DIR}"
+  mkdir -p -m 0755 "${STATE_DIR}"
   printf 'port=%s\ntoken=deadbeef\n' "${JETSON_SS_PORT}" >"${STATE}"
   run bash -c "'${GUARD_SH}' enable 2>&1"
   assert_success
@@ -436,7 +436,7 @@ _wait_for() {
 }
 
 @test "status reports a stale state (port recorded but reads 0)" {
-  mkdir -p "${STATE_DIR}"
+  mkdir -p -m 0755 "${STATE_DIR}"
   printf 'port=%s\ntoken=deadbeef\n' "${JETSON_SS_PORT}" >"${STATE}"
   run bash -c "'${GUARD_SH}' status 2>&1"
   assert_success
@@ -505,8 +505,7 @@ _wait_for() {
   [[ -s "${PIDFILE}" ]]
   run cat "${JETSON_SS_PORT}/disable"
   assert_output '1'
-  _wait_for 10 "[[ ! -e '${STATE}' ]]"
-  [[ ! -e "${PIDFILE}" ]]
+  _wait_for 10 "[[ ! -e '${STATE}' && ! -e '${PIDFILE}' ]]"
   run cat "${JETSON_SS_PORT}/disable"
   assert_output '0'
 }
