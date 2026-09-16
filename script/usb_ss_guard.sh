@@ -39,10 +39,13 @@
 # root (`sudo -n … _spawn`) while the credential from `disable` is fresh,
 # so it needs no tty later (the nm_flash_guard #77 problem does not apply).
 #
-# Paths are overridable so the bats suite can drive every branch against a
-# fixture tree without root or hardware: USB_SYSFS, USB_SS_GUARD_STATE_DIR
-# (both defined in lib/usb.sh), USB_SS_GUARD_POLL_INTERVAL,
-# USB_SS_GUARD_TIMEOUT.
+# The sysfs root and the state directory are literal constants (lib/usb.sh):
+# nothing in the caller's environment can redirect a privileged write. The
+# bats suite drives every branch against a fixture tree through the one
+# explicit override, USB_SS_GUARD_TEST_ROOT=<dir> (sysfs <dir>/sys, state
+# <dir>/run, no sudo at all, announced with a "[test mode]" line).
+# USB_SS_GUARD_POLL_INTERVAL / USB_SS_GUARD_TIMEOUT tune the watcher and
+# are validated before anything is touched.
 
 set -euo pipefail
 
@@ -50,6 +53,8 @@ _HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/usb.sh
 . "${_HERE}/lib/usb.sh"
 
+TEST_MODE=""
+[[ -n "${USB_SS_GUARD_TEST_ROOT:-}" ]] && TEST_MODE=1
 STATE_DIR="${USB_SS_GUARD_STATE_DIR}"
 STATE_FILE="${STATE_DIR}/state"          # port=<usb_port dir>\ntoken=<hex>
 WATCH_PIDFILE="${STATE_DIR}/watch.pid"   # written by the watcher itself
@@ -62,10 +67,33 @@ _ok()   { printf '  ok: %s\n' "$1" >&2; }
 _warn() { printf '  %s\n' "$1" >&2; }
 _err()  { printf '  error: %s\n' "$1" >&2; }
 
-# Privileged writes always go through sudo, also from the root watcher:
-# root needs no password and no tty for it, and one code path keeps the
-# test double (a stubbed sudo) honest for every branch.
-_sudo() { sudo "$@"; }
+# _sudo [-n] <cmd...> — every privileged call goes through here, also from
+# the root watcher (root needs no password and no tty for sudo). Before
+# anything runs it re-asserts that the paths this process would hand to
+# root are the production constants — the one situation in which sudo is
+# skipped is the explicit test mode, where both roots live in a tmpdir.
+_sudo() {
+  local flag=()
+  [[ "${1:-}" == -n ]] && { flag=(-n); shift; }
+  if [[ -n "${TEST_MODE}" ]]; then
+    "$@"
+    return
+  fi
+  if [[ "${USB_SYSFS}" != "${USB_SYSFS_PROD}" || "${STATE_DIR}" != "${USB_SS_GUARD_STATE_DIR_PROD}" ]]; then
+    _err "refusing a privileged call: sysfs=${USB_SYSFS} state=${STATE_DIR} are not the production paths and this is not test mode"
+    exit 3
+  fi
+  sudo "${flag[@]}" "$@"
+}
+
+# _validate_timeout <value> <source> — whole seconds > 0, or usage exit 2.
+# Called for the command line AND the environment defaults before any
+# write, so a bad value can never reach a write or an arithmetic context.
+_validate_timeout() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]] && return 0
+  printf 'usb_ss_guard: %s: timeout must be whole seconds (> 0), got: "%s"\n' "$2" "$1" >&2
+  exit 2
+}
 
 # _attr <dir> <name> — first line of a sysfs attribute, empty when unreadable.
 _attr() { head -n1 "$1/$2" 2>/dev/null || true; }
@@ -204,12 +232,15 @@ _is_watcher_pid() {
 # _stop_watcher — kill the watcher the pidfile names, but only after /proc
 # confirms it is a usb_ss_guard watcher; anything else is left alone and
 # just the pidfile goes. Never kills the caller (the watcher calls enable).
+# The pidfile is read and judged before any privileged call is made.
 _stop_watcher() {
   local pid
   [[ -e "${WATCH_PIDFILE}" ]] || return 0
   pid="$(head -n1 "${WATCH_PIDFILE}" 2>/dev/null || true)"
   if [[ "${pid}" == "$$" ]]; then
     return 0
+  elif [[ ! "${pid}" =~ ^[0-9]+$ ]]; then
+    _warn "pidfile ${WATCH_PIDFILE} does not hold a PID — dropping it"
   elif _is_watcher_pid "${pid}"; then
     _sudo kill "${pid}" 2>/dev/null || true
     _ok "stopped watcher (PID ${pid})"
@@ -370,6 +401,8 @@ _pidfile_release() {
 # USB 2. Backgrounded as root by auto; also callable directly (tests).
 _watch() {
   local timeout="${1:-${AUTO_TIMEOUT_DEFAULT}}" token="${2:-}" waited=0
+  _validate_timeout "${timeout}" '_watch timeout'
+  _validate_timeout "${POLL_INTERVAL}" 'USB_SS_GUARD_POLL_INTERVAL'
   if ! ( set -o noclobber; printf '%s\n' "$$" >"${WATCH_PIDFILE}" ) 2>/dev/null; then
     _warn "another watcher owns ${WATCH_PIDFILE} — exiting"
     return 0
@@ -393,11 +426,19 @@ _watch() {
 }
 
 # _spawn <timeout> <token> — run as root by auto (via sudo -n): detach the
-# watcher into its own session and return at once, so sudo's exit status
-# says whether the watcher could be started at all.
+# watcher into its own session, then wait for it to claim its pidfile (or
+# to have finished already, which clears the state) so the exit status
+# says whether a watcher is actually running.
 _spawn() {
+  local _i
+  _validate_timeout "$1" '_spawn timeout'
   setsid bash "${BASH_SOURCE[0]}" _watch "$1" "$2" >/dev/null 2>&1 </dev/null &
   disown $! 2>/dev/null || true
+  for _i in $(seq 1 20); do
+    [[ -s "${WATCH_PIDFILE}" || ! -e "${STATE_FILE}" ]] && return 0
+    sleep 0.25
+  done
+  return 1
 }
 
 # auto [timeout] — disable now, then start a root watcher that restores
@@ -407,11 +448,12 @@ auto() {
   if (( $# > 1 )); then
     printf 'Usage: %s auto [timeout]\n' "$0" >&2; return 2
   elif (( $# == 1 )); then
-    if [[ ! "$1" =~ ^[1-9][0-9]*$ ]]; then
-      printf 'usb_ss_guard: auto expects a timeout in whole seconds (> 0), got: "%s"\n' "$1" >&2; return 2
-    fi
     timeout="$1"
+    _validate_timeout "${timeout}" 'auto timeout'
+  else
+    _validate_timeout "${timeout}" 'USB_SS_GUARD_TIMEOUT'
   fi
+  _validate_timeout "${POLL_INTERVAL}" 'USB_SS_GUARD_POLL_INTERVAL'
   # One watcher at a time: a previous `auto` still polling would race this
   # one for the port (and its token no longer matches after disable anyway).
   _stop_watcher
@@ -426,18 +468,13 @@ auto() {
   _step "Starting auto watcher as root (re-enable on boot 0955:${JETSON_BOOTED_PID}, or after ${timeout}s)"
   # Root, detached, no tty: started while the credential from disable() is
   # still fresh, so the eventual re-enable never needs sudo again. `-n`
-  # rather than a prompt: a refusal must be reported, not hang.
-  if ! sudo -n bash "${BASH_SOURCE[0]}" _spawn "${timeout}" "${token}" </dev/null; then
-    _warn "could not start the watcher (sudo -n refused — credential expired or tty_tickets without a cached one)."
+  # rather than a prompt: a refusal must be reported, not hang. _spawn
+  # returns only once the watcher holds its pidfile (or has finished).
+  if ! _sudo -n bash "${BASH_SOURCE[0]}" _spawn "${timeout}" "${token}" </dev/null; then
+    _warn "could not start the watcher (sudo -n refused — credential expired or tty_tickets without a cached one — or it died at once)."
     _warn "The SuperSpeed port stays parked: after the flash run '${BASH_SOURCE[0]} enable' (host_teardown.sh does), or reboot."
     return 0
   fi
-  # The watcher writes its own pidfile before it does anything else; wait
-  # for that (or for it to have already finished, which clears the state).
-  for _ in $(seq 1 40); do
-    [[ -s "${WATCH_PIDFILE}" || ! -e "${STATE_FILE}" ]] && break
-    sleep 0.25
-  done
   if [[ -s "${WATCH_PIDFILE}" ]]; then
     _ok "watcher PID $(head -n1 "${WATCH_PIDFILE}") — no manual 'enable' needed after the flash"
   elif [[ ! -e "${STATE_FILE}" ]]; then
@@ -446,6 +483,10 @@ auto() {
     _warn "watcher did not report in — if the port stays off after the flash run: ${BASH_SOURCE[0]} enable"
   fi
 }
+
+if [[ -n "${TEST_MODE}" ]]; then
+  printf '[usb-ss-guard] [test mode] sysfs=%s state=%s — sudo is not used\n' "${USB_SYSFS}" "${STATE_DIR}" >&2
+fi
 
 case "${1:-}" in
   disable) disable ;;

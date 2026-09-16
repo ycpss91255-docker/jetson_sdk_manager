@@ -39,8 +39,22 @@ JETSON_INITRD_PID='7035'
 # not be forgeable. It lives in a root-owned directory under /run (tmpfs,
 # cleared on boot like the sysfs setting itself; nobody but root can
 # pre-create /run/usb-ss-guard), and the path is re-validated on every use.
-USB_SYSFS="${USB_SYSFS:-/sys/bus/usb/devices}"
-USB_SS_GUARD_STATE_DIR="${USB_SS_GUARD_STATE_DIR:-/run/usb-ss-guard}"
+#
+# Both roots are literal in production: an unprivileged caller's
+# environment must not be able to point the guard's privileged writes at
+# some other root-owned tree. The ONLY override is the explicit test mode
+# USB_SS_GUARD_TEST_ROOT=<dir> (sysfs at <dir>/sys, state at <dir>/run),
+# under which usb_ss_guard.sh also stops using sudo altogether.
+USB_SYSFS_PROD='/sys/bus/usb/devices'
+USB_SS_GUARD_STATE_DIR_PROD='/run/usb-ss-guard'
+# shellcheck disable=SC2034  # USB_SS_GUARD_STATE_DIR is read by usb_ss_guard.sh and status.sh
+if [[ -n "${USB_SS_GUARD_TEST_ROOT:-}" ]]; then
+  USB_SYSFS="${USB_SS_GUARD_TEST_ROOT}/sys"
+  USB_SS_GUARD_STATE_DIR="${USB_SS_GUARD_TEST_ROOT}/run"
+else
+  USB_SYSFS="${USB_SYSFS_PROD}"
+  USB_SS_GUARD_STATE_DIR="${USB_SS_GUARD_STATE_DIR_PROD}"
+fi
 
 # usb_ss_state_port <state file>
 # Prints the `port=` value of a guard state file (empty when absent).
