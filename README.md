@@ -41,21 +41,21 @@ What it takes: an x86_64 Linux host with Docker (usable without `sudo`), one USB
 
 The Jetson's Boot ROM only accepts a flash while the board is in **Force Recovery** ("REC" / "APX" / "RCM" — same thing). You enter it with the buttons on the devkit; the host then sees a USB device `0955:7023`-ish instead of the booted OS.
 
-**AGX Orin Developer Kit** — the three buttons are under the front edge, next to a USB-C port:
+**AGX Orin Developer Kit** — the three buttons (Power, Force Recovery, Reset) sit under the front edge, and the USB-C port that supports **device / recovery mode** is the one right next to them (the other USB-C, further along, is DisplayPort-capable and does *not* flash). Schematic — for the real photo and connector designators see NVIDIA's user guide linked below:
 
 ```
-  front edge of the AGX Orin devkit (viewed from the front)
+  front edge of the AGX Orin devkit (schematic, not to scale)
 
    ┌──────────┐    ┌─────┐  ┌─────┐  ┌─────┐
    │  USB-C   │    │ PWR │  │ REC │  │ RST │
    └──────────┘    └─────┘  └─────┘  └─────┘
-     ▲ this port      power   force    reset
-     (next to the             recovery
-      buttons)
+     ▲ flash /        power   force    reset
+       device-mode            recovery
+       port
 ```
 
 1. Disconnect the power supply.
-2. Connect the USB-C cable from **the USB-C port next to the buttons** to the host. Direct connection — no hub.
+2. Connect the USB-C cable from **the device-mode USB-C port (next to the buttons)** to the host. Direct connection — no hub. If `./jetson status` never sees the board, try the other USB-C port before anything else.
 3. **Hold REC** (the middle button).
 4. Reconnect power (or press PWR while still holding REC).
 5. Release REC after about 2 seconds.

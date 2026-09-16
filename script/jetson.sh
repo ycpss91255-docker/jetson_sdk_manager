@@ -67,28 +67,30 @@ USAGE
 
 # ── preflight helpers ────────────────────────────────────────────────
 
-# _prepared_marker — path of the .prepared.yaml prepare.sh wrote, if any.
-_prepared_marker() {
-  find "${L4T_REPO_ROOT}/data/jetson_l4t" -maxdepth 3 -name .prepared.yaml 2>/dev/null | head -n1
-}
-
-# _phase_done <phase> — yq is not a host dependency, so read the marker
-# with grep: mikefarah yq writes a block list ("  - images"); hand-written
-# fixtures may use flow style ("phases: [bsp, images]"). Accept both.
+# _phase_done <phase> — via lib/status.sh (sed-based, no yq). Exactly one
+# prepared tree must exist; 0 → not prepared, >1 → ambiguous.
 _phase_done() {
-  local marker
-  marker="$(_prepared_marker)"
-  [[ -n "${marker}" ]] || return 1
-  grep -qE "^[[:space:]]*-[[:space:]]*$1[[:space:]]*$|^phases:.*[[:space:][]$1[],[:space:]]" "${marker}"
+  local markers n
+  markers="$(status_markers)"
+  n="$(printf '%s\n' "${markers}" | grep -c . || true)"
+  (( n == 1 )) || return 1
+  status_phase_done "${markers}" "$1"
 }
 
-# _recovery_line — the lsusb line of the first Jetson in recovery, or empty.
+# _recovery_line — the lsusb line of THE Jetson in recovery. Exactly one:
+# with two boards in recovery the flash tool picks whichever enumerates
+# first, which is not a choice anyone made, so refuse.
 _recovery_line() {
-  local pid line
-  while IFS=$'\t' read -r pid line; do
-    if jetson_pid_is_recovery "${pid}"; then printf '%s\n' "${line}"; return 0; fi
-  done < <(jetson_list_devices)
-  return 1
+  local lines n
+  lines="$(status_recovery_lines)"
+  n="$(printf '%s\n' "${lines}" | grep -c . || true)"
+  case "${n}" in
+    0) return 1 ;;
+    1) printf '%s\n' "${lines}" ;;
+    *) _bad "${n} Jetsons in recovery on the USB bus — disconnect all but the one to flash"
+       printf '%s\n' "${lines}" | sed 's/^/      /' >&2
+       exit 1 ;;
+  esac
 }
 
 _rec_instructions() {
@@ -111,6 +113,12 @@ cmd_flash() {
     _die "no Jetson in recovery on the USB bus" "run ./jetson wait-rec, then ./jetson flash again"
   fi
   _ok "Jetson in recovery: ${rec}"
+  local nmarkers
+  nmarkers="$(status_markers | grep -c . || true)"
+  if (( nmarkers > 1 )); then
+    _die "more than one prepared L4T tree under data/jetson_l4t — which one to flash is ambiguous" \
+         "./script/clean.sh l4t, then ./jetson prepare"
+  fi
   if ! _phase_done images; then
     _die "prepare has not produced flash images yet (no 'images' phase in .prepared.yaml)" \
          "run ./jetson prepare first"
@@ -153,22 +161,35 @@ cmd_prepare() {
 # cmd_wait_rec [seconds] — 0 = wait forever. Ctrl-C exits 130 and changes
 # nothing (this command never touches NM or mounts).
 cmd_wait_rec() {
-  local timeout="${1:-300}" interval="${WAIT_REC_INTERVAL:-2}" waited=0 rec
+  local timeout="${1:-300}" interval="${WAIT_REC_INTERVAL:-2}"
   [[ "${timeout}" =~ ^[0-9]+$ ]] || { printf 'jetson: wait-rec expects a number of seconds, got: %s\n' "${timeout}" >&2; exit 2; }
-  trap 'printf "\n[jetson] wait-rec interrupted\n" >&2; exit 130' INT
+  [[ "${interval}" =~ ^[0-9]*\.?[0-9]+$ ]] && awk -v i="${interval}" 'BEGIN{exit !(i>0)}' \
+    || { printf 'jetson: WAIT_REC_INTERVAL must be a positive number of seconds, got: %s\n' "${interval}" >&2; exit 2; }
   _say "wait-rec — waiting for a Jetson in recovery (timeout: ${timeout}s, 0 = forever)"
   _rec_instructions
-  while :; do
-    if rec="$(_recovery_line)"; then
-      _ok "Jetson in recovery: ${rec}"
-      return 0
-    fi
-    if (( timeout > 0 )) && awk -v w="${waited}" -v t="${timeout}" 'BEGIN{exit !(w>=t)}'; then
-      _die "timed out after ${timeout}s — no Jetson in recovery" "check the cable is on the FRONT USB-C port, redo the REC sequence, then ./jetson wait-rec"
-    fi
-    sleep "${interval}"
-    waited="$(awk -v w="${waited}" -v i="${interval}" 'BEGIN{print w+i}')"
-  done
+  # The poll runs in a subshell so the INT trap is scoped to it: after a
+  # successful wait, ./jetson all continues into flash with no trap left
+  # behind. Deadline is wall-clock (SECONDS), not a sum of sleeps.
+  (
+    trap 'printf "\n[jetson] wait-rec interrupted\n" >&2; exit 130' INT
+    local rec start=${SECONDS} remaining nap
+    while :; do
+      if rec="$(_recovery_line)"; then
+        _ok "Jetson in recovery: ${rec}"
+        exit 0
+      fi
+      if (( timeout > 0 )); then
+        remaining=$(( timeout - (SECONDS - start) ))
+        if (( remaining <= 0 )); then
+          _die "timed out after ${timeout}s — no Jetson in recovery" "check the cable is on the FRONT USB-C port, redo the REC sequence, then ./jetson wait-rec"
+        fi
+        nap="$(awk -v i="${interval}" -v r="${remaining}" 'BEGIN{print (i<r)?i:r}')"
+      else
+        nap="${interval}"
+      fi
+      sleep "${nap}"
+    done
+  )
 }
 
 cmd_all() {
@@ -240,25 +261,29 @@ _status_srv() {
   else printf 'warn\t%s not bridged — only needed for flash; ./jetson prepare (host_setup.sh) does it\n' "${srv}"; fi
 }
 
+# The check list is overridable so the test suite can inject a failing one.
+JETSON_STATUS_CHECKS="${JETSON_STATUS_CHECKS:-_status_tools status_config status_store _status_srv status_kernel _status_nm _status_images status_prepare status_jetson}"
+
 cmd_status() {
-  local strict="" bad=0 warn=0 level msg
+  local strict="" bad=0 warn=0 level msg chk out
   [[ "${1:-}" == "--strict" ]] && strict=1
   _say "status — $(date '+%Y-%m-%d %H:%M')"
-  while IFS=$'\t' read -r level msg; do
-    case "${level}" in
-      ok)   _ok "${msg}" ;;
-      warn) _warn "${msg}"; warn=$((warn+1)) ;;
-      bad)  _bad "${msg}"; bad=$((bad+1)) ;;
-    esac
-  done < <(
-    # Each check is isolated: one that blows up reports itself as ✘ instead
-    # of silently truncating the report (set -e inside the substitution).
-    local chk
-    for chk in _status_tools status_config status_store _status_srv status_kernel \
-               _status_nm _status_images status_prepare status_jetson; do
-      "${chk}" 2>/dev/null || printf 'bad\tinternal: %s failed — please report this\n' "${chk}"
-    done
-  )
+  # Each check runs in its own command substitution in THIS shell: a check
+  # that dies (exit, unbound variable, missing function) is caught by the
+  # substitution's exit status and rendered as ✘, so the report can never
+  # be silently truncated and still end in "ready".
+  for chk in ${JETSON_STATUS_CHECKS}; do
+    if out="$("${chk}" 2>/dev/null)"; then :; else
+      out="${out}"$'\n'"bad"$'\t'"internal: ${chk} failed — please report this"
+    fi
+    while IFS=$'\t' read -r level msg; do
+      case "${level}" in
+        ok)   _ok "${msg}" ;;
+        warn) _warn "${msg}"; warn=$((warn+1)) ;;
+        bad)  _bad "${msg}"; bad=$((bad+1)) ;;
+      esac
+    done <<<"${out}"
+  done
   printf '\n' >&2
   if (( bad > 0 )); then
     printf '[jetson] %d blocker(s) — fix the ✘ lines first.\n' "${bad}" >&2; exit 1
@@ -271,13 +296,14 @@ cmd_status() {
 main() {
   local cmd="${1:-}"
   [[ $# -gt 0 ]] && shift
+  _no_args() { (( $# == 0 )) || { printf 'jetson: %s takes no arguments (got: %s)\n\n' "${cmd}" "$*" >&2; _usage; exit 2; }; }
   case "${cmd}" in
-    status)   cmd_status "$@" ;;
-    prepare)  cmd_prepare "$@" ;;
-    wait-rec) cmd_wait_rec "$@" ;;
-    flash)    cmd_flash "$@" ;;
-    all)      cmd_all "$@" ;;
-    teardown) cmd_teardown "$@" ;;
+    status)   [[ $# -eq 0 || ( $# -eq 1 && "$1" == "--strict" ) ]] || { _usage; exit 2; }; cmd_status "$@" ;;
+    prepare)  _no_args "$@"; cmd_prepare ;;
+    wait-rec) (( $# <= 1 )) || { _usage; exit 2; }; cmd_wait_rec "$@" ;;
+    flash)    _no_args "$@"; cmd_flash ;;
+    all)      (( $# <= 1 )) || { _usage; exit 2; }; cmd_all "$@" ;;
+    teardown) _no_args "$@"; cmd_teardown ;;
     purge)    cmd_purge "$@" ;;
     ""|-h|--help|help) _usage; [[ -z "${cmd}" || "${cmd}" == "help" || "${cmd}" == -* ]] && exit 0 ;;
     *) printf 'jetson: unknown command: %s\n\n' "${cmd}" >&2; _usage; exit 2 ;;

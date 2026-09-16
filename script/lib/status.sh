@@ -19,12 +19,21 @@ STATUS_MOUNTPOINT_BIN="${STATUS_MOUNTPOINT_BIN:-mountpoint}"
 _st() { printf '%s\t%s\n' "$1" "$2"; }
 
 # ── Jetson on the USB bus ────────────────────────────────────────────
+# status_recovery_lines — one lsusb line per Jetson in recovery (0..n lines).
+status_recovery_lines() {
+  local pid line
+  while IFS=$'\t' read -r pid line; do
+    [[ -n "${pid}" ]] && jetson_pid_is_recovery "${pid}" && printf '%s\n' "${line}"
+  done < <(jetson_list_devices)
+  return 0
+}
+
 status_jetson() {
-  local pid line n=0 rec="" booted="" other=""
+  local pid line n=0 nrec=0 rec="" booted="" other=""
   while IFS=$'\t' read -r pid line; do
     [[ -n "${pid}" ]] || continue
     n=$((n+1))
-    if jetson_pid_is_recovery "${pid}"; then rec="${line}"
+    if jetson_pid_is_recovery "${pid}"; then rec="${line}"; nrec=$((nrec+1))
     elif [[ "${pid,,}" == "${JETSON_BOOTED_PID}" ]]; then booted="${line}"
     else other="${line}"; fi
   done < <(jetson_list_devices)
@@ -32,7 +41,11 @@ status_jetson() {
     _st warn "no Jetson on the USB bus — connect the FRONT USB-C port and enter REC (./jetson wait-rec)"
     return 0
   fi
-  (( n > 1 )) && _st warn "${n} NVIDIA devices on the bus — make sure you flash the right one"
+  if (( nrec > 1 )); then
+    _st warn "${n} NVIDIA devices on the bus, ${nrec} in recovery — flash refuses until only one is connected"
+  elif (( n > 1 )); then
+    _st warn "${n} NVIDIA devices on the bus — make sure you flash the right one"
+  fi
   if [[ -n "${rec}" ]]; then
     _st ok "Jetson in recovery: ${rec}"
   elif [[ -n "${booted}" ]]; then
@@ -45,24 +58,34 @@ status_jetson() {
 # ── prepare progress (.prepared.yaml) ────────────────────────────────
 STATUS_PHASES="bsp rootfs binaries user network images"
 
-_status_marker() {
-  find "${L4T_REPO_ROOT}/data/jetson_l4t" -maxdepth 3 -name .prepared.yaml 2>/dev/null | head -n1
+# status_markers — every .prepared.yaml under data/jetson_l4t, one per line.
+# More than one means two L4T trees were prepared (board switch without
+# clean.sh l4t); callers must not silently pick one.
+status_markers() {
+  find "${L4T_REPO_ROOT}/data/jetson_l4t" -maxdepth 3 -name .prepared.yaml 2>/dev/null | sort
 }
 
-# _status_phase_done <marker> <phase> — block list or flow style, no yq.
-_status_phase_done() {
-  grep -qE "^[[:space:]]*-[[:space:]]*$2[[:space:]]*$|^phases:.*[[:space:][]$2[],[:space:]]" "$1"
+# status_phase_done <marker> <phase> — yq is not a host dependency, so the
+# marker is read with sed: strip inline comments and quotes, then match a
+# block-list item ("  - images") or a flow-list member ("phases: [bsp, images]").
+status_phase_done() {
+  sed -E 's/[[:space:]]+#.*$//; s/["'"'"']//g' "$1" \
+    | grep -qE "^[[:space:]]*-[[:space:]]*$2[[:space:]]*$|^phases:.*[[:space:][]$2[],[:space:]]"
 }
 
 status_prepare() {
-  local marker missing="" p
-  marker="$(_status_marker)"
-  if [[ -z "${marker}" ]]; then
+  local marker missing="" p n
+  n="$(status_markers | grep -c . || true)"
+  if (( n == 0 )); then
     _st warn "prepare has not run — ./jetson prepare (~30 min, no board needed)"
     return 0
+  elif (( n > 1 )); then
+    _st warn "more than one prepared L4T tree under data/jetson_l4t (${n}) — ambiguous; ./script/clean.sh l4t and re-run ./jetson prepare"
+    return 0
   fi
+  marker="$(status_markers)"
   for p in ${STATUS_PHASES}; do
-    _status_phase_done "${marker}" "${p}" || missing="${missing} ${p}"
+    status_phase_done "${marker}" "${p}" || missing="${missing} ${p}"
   done
   if [[ -z "${missing}" ]]; then
     _st ok "prepare complete: ${STATUS_PHASES// /, } (flash images ready)"
@@ -84,10 +107,16 @@ status_store() {
     fi
     return 0
   fi
-  mkdir -p "${data}" 2>/dev/null || true
-  fstype="$(store_fstype_of "${data}")"
+  # A status query must not create anything: probe the nearest existing
+  # parent when data/jetson_l4t is not there yet.
+  local probe="${data}" note=""
+  if [[ ! -e "${probe}" ]]; then
+    note=" (data/jetson_l4t not created yet — prepare does that)"
+    probe="${L4T_REPO_ROOT}/data"; [[ -e "${probe}" ]] || probe="${L4T_REPO_ROOT}"
+  fi
+  fstype="$(store_fstype_of "${probe}")"
   if store_fstype_is_unix "${fstype:-?}"; then
-    _st ok "data store: native ${fstype:-unix} filesystem, nothing to mount"
+    _st ok "data store: native ${fstype:-unix} filesystem, nothing to mount${note}"
   else
     _st bad "data/jetson_l4t is on ${fstype} (cannot keep setuid/ownership) — ./jetson prepare sets up the in-repo ext4 image"
   fi
@@ -111,6 +140,16 @@ status_kernel() {
 }
 
 # ── jetson.yaml ──────────────────────────────────────────────────────
+
+# _status_yaml_scalar <file> <key> — first "key: value" scalar, with the
+# inline comment and surrounding single/double quotes stripped. A small,
+# deliberately limited reader (no yq on the host); values are never echoed
+# by callers except board / storage.
+_status_yaml_scalar() {
+  sed -nE "s/^[[:space:]]*$2:[[:space:]]*(.*)$/\1/p" "$1" | head -n1 \
+    | sed -E 's/[[:space:]]+#.*$//; s/^#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//; s/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/'
+}
+
 status_config() {
   local cfg="${L4T_REPO_ROOT}/jetson.yaml" target board storage pw
   if [[ ! -e "${cfg}" ]]; then
@@ -118,10 +157,14 @@ status_config() {
     return 0
   fi
   target="$(readlink "${cfg}" 2>/dev/null || echo "${cfg}")"
-  board="$(sed -nE 's/^[[:space:]]*board:[[:space:]]*([^[:space:]#]+).*/\1/p' "${cfg}" | head -n1)"
-  storage="$(sed -nE 's/^[[:space:]]*device:[[:space:]]*([^[:space:]#]+).*/\1/p' "${cfg}" | head -n1)"
-  _st ok "config: ${target##*/} (board ${board:-?}, storage ${storage:-?})"
-  pw="$(sed -nE 's/^[[:space:]]*password:[[:space:]]*([^[:space:]#]+).*/\1/p' "${cfg}" | head -n1)"
+  board="$(_status_yaml_scalar "${cfg}" board)"
+  storage="$(_status_yaml_scalar "${cfg}" device)"
+  if [[ -z "${board}" || -z "${storage}" ]]; then
+    _st warn "config: ${target##*/} — could not read hardware.board / storage.device; compare with config/jetson/_example.yaml"
+  else
+    _st ok "config: ${target##*/} (board ${board}, storage ${storage})"
+  fi
+  pw="$(_status_yaml_scalar "${cfg}" password)"
   if [[ "${pw}" == "jetson" ]]; then
     _st warn "default password in jetson.yaml — change it before flashing, or run passwd on the board right after"
   fi

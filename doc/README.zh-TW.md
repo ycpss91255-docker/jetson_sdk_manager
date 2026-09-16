@@ -41,20 +41,21 @@ cd jetson_sdk_manager
 
 Jetson 的 Boot ROM 只在 **Force Recovery**(「REC」/「APX」/「RCM」都是同一件事)狀態下接受燒錄。用 devkit 上的按鍵進入;之後 host 看到的會是 USB 裝置 `0955:7023` 之類,而不是已開機的 OS。
 
-**AGX Orin Developer Kit** — 三顆按鍵在前緣下方,旁邊有一個 USB-C:
+**AGX Orin Developer Kit** — 三顆按鍵(Power、Force Recovery、Reset)在前緣下方,支援 **device / recovery mode** 的 USB-C 孔就是緊鄰按鍵的那個(另一個較遠的 USB-C 支援 DisplayPort,**不能**拿來燒錄)。示意圖——實際照片與接頭編號請看下方連結的 NVIDIA user guide:
 
 ```
-  AGX Orin devkit 前緣(從正面看)
+  AGX Orin devkit 前緣(示意,非實際比例)
 
    ┌──────────┐    ┌─────┐  ┌─────┐  ┌─────┐
    │  USB-C   │    │ PWR │  │ REC │  │ RST │
    └──────────┘    └─────┘  └─────┘  └─────┘
-     ▲ 用這個孔      電源     force    reset
-     (按鍵旁邊)              recovery
+     ▲ 燒錄 /        電源     force    reset
+       device-mode            recovery
+       孔
 ```
 
 1. 拔掉電源。
-2. USB-C 線從**按鍵旁邊的那個 USB-C 孔**接到 host。直接接,不要經 hub。
+2. USB-C 線從 **device-mode 的 USB-C 孔(按鍵旁邊)** 接到 host。直接接,不要經 hub。若 `./jetson status` 一直看不到板子,先換另一個 USB-C 孔試試。
 3. **按住 REC**(中間那顆)。
 4. 接回電源(或按住 REC 的同時按 PWR)。
 5. 約 2 秒後放開 REC。

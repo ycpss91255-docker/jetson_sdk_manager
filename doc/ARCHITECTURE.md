@@ -67,7 +67,7 @@ This repo ships two ways to flash a Jetson. **Factory flash is the documented de
 
 The **prepare** stage uses the BSP's own `l4t_initrd_flash.sh --no-flash` to build flash images host-side (no Jetson, no NVIDIA login); the **flash** stage writes them with `--flash-only` — the Jetson boots a minimal initrd over the `tegrarcm_v2` USB link and pulls the images from a local NFS export on that same link. That needs the host's `nfsd` module loaded (see [README → Prerequisites](../README.md#prerequisites)), but no `iptables` or `usb-gadget` device-mode forwarding.
 
-**SDK Manager is _not_ "broken inside Docker"** — an earlier claim this repo has since dropped. The well-known [Flashing-99% stall](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066) was the **host's NetworkManager** DHCP-probing the USB gadget link and tearing it down ([#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48)), fixed by [`nm_flash_guard.sh`](../script/nm_flash_guard.sh); the *"Device mode forwarding host setup failed"* step was just missing `iptables` + `dnsutils`, now in `sdkm-base`. With the [shared host prep](#prerequisites) (`host_setup.sh`, `nm_flash_guard.sh auto`) and an NVIDIA login, SDK Manager flashes — see [SDK Manager (cli / gui)](#sdk-manager-cli--gui). Factory flash stays the default because it needs no login and is scriptable/offline.
+**SDK Manager is _not_ "broken inside Docker"** — an earlier claim this repo has since dropped. The well-known [Flashing-99% stall](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066) was the **host's NetworkManager** DHCP-probing the USB gadget link and tearing it down ([#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48)), fixed by [`nm_flash_guard.sh`](../script/nm_flash_guard.sh); the *"Device mode forwarding host setup failed"* step was just missing `iptables` + `dnsutils`, now in `sdkm-base`. With the [shared host prep](../README.md#prerequisites) (`host_setup.sh`, `nm_flash_guard.sh auto`) and an NVIDIA login, SDK Manager flashes — see [SDK Manager (cli / gui)](#sdk-manager-cli--gui). Factory flash stays the default because it needs no login and is scriptable/offline.
 
 ## SDK Manager (cli / gui)
 
@@ -79,8 +79,6 @@ make run -- -t gui      # or: -t cli
 ```
 
 Best-effort means: CI builds the stages and smokes `sdkmanager --ver`, but a real SDK Manager flash is manual and may drift with NVIDIA upstream. For a GUI/CLI flash to succeed, set up the same host prerequisites as the factory path first — `./script/host_setup.sh` and `./script/nm_flash_guard.sh auto` — and sign in with your NVIDIA Developer account. The `gui` entrypoint prints a banner with these steps, then (interactively) waits for Enter before launching; extra positional args after `-t gui` are forwarded to `sdkmanager-gui` (after `--no-sandbox`). GUI mode needs an X11 session on the host (auto-forwarded by the base template).
-
-GUI mode requires an X11 session on the host; the base template auto-detects `$DISPLAY` and forwards the X11 socket + `XAUTHORITY`.
 
 ## Persistent Data
 

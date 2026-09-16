@@ -25,7 +25,7 @@ The store lifecycle (`host_setup.sh` step 0 → `host_teardown.sh` → `clean.sh
 
 Be honest about what has actually been flashed versus what is only known to build and validate.
 
-**What CI proves (and only this):** image build for every stage, `shellcheck` + `hadolint` lint, the `bats` smoke suite, and `sdkmanager --ver`. **CI does NOT run a real flash** — no Jetson hardware is attached in CI, so no end-to-end flash, NFS serve, or eMMC write is exercised there. See the the HITL-ONLY section below for the steps only hardware-in-the-loop testing can cover.
+**What CI proves (and only this):** image build for every stage, `shellcheck` + `hadolint` lint, the `bats` smoke suite, and `sdkmanager --ver`. **CI does NOT run a real flash** — no Jetson hardware is attached in CI, so no end-to-end flash, NFS serve, or eMMC write is exercised there. See the HITL-ONLY section below for the steps only hardware-in-the-loop testing can cover.
 
 Per-preset status:
 

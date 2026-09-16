@@ -173,3 +173,52 @@ _level() { cut -f1; }
   assert_output --partial $'bad\t'
   assert_output --partial 'jetson.yaml'
 }
+
+# ── review round 1 ───────────────────────────────────────────────────
+
+@test "status_store: no marker and no data/jetson_l4t yet → reports, never creates the directory" {
+  rmdir "${REPO}/data/jetson_l4t"
+  STAT_BIN="${STUB_BIN}/stat-ext4"; printf '#!/usr/bin/env bash\necho ext4\n' >"${STAT_BIN}"; chmod +x "${STAT_BIN}"; export STAT_BIN
+  run status_store
+  assert_output --partial $'ok\t'
+  assert_output --partial 'not created yet'
+  [[ ! -e "${REPO}/data/jetson_l4t" ]]
+}
+
+@test "status_config: quoted values and inline comments are parsed; quoted default password still warns" {
+  printf 'hardware:\n  board: "agx-orin"   # devkit\nstorage:\n  device: '"'"'emmc'"'"'\nuser:\n  password: "jetson"\n' >"${REPO}/jetson.yaml"
+  run status_config
+  assert_output --partial 'board agx-orin, storage emmc'
+  assert_output --partial 'default password'
+  refute_output --partial '"'
+}
+
+@test "status_config: unparsable board / storage → warn, not ok" {
+  printf 'user:\n  password: x\n' >"${REPO}/jetson.yaml"
+  run status_config
+  assert_output --partial $'warn\t'
+  assert_output --partial 'board'
+  refute_output --partial $'ok\tconfig'
+}
+
+@test "status_prepare: quoted phases with inline comments count as done" {
+  local tree="${REPO}/data/jetson_l4t/JetPack_6.2.2_Linux_jetson-agx-orin-devkit/Linux_for_Tegra"
+  mkdir -p "${tree}"
+  printf 'phases:\n  - "bsp"\n  - rootfs # done\n  - '"'"'binaries'"'"'\n  - user\n  - network\n  - "images" # ok\n' >"${tree}/.prepared.yaml"
+  run status_prepare
+  assert_output --partial $'ok\t'
+}
+
+@test "status_prepare: two markers → warn about the ambiguity instead of picking one" {
+  local a="${REPO}/data/jetson_l4t/JetPack_6.2.2_Linux_jetson-agx-orin-devkit/Linux_for_Tegra"
+  local b="${REPO}/data/jetson_l4t/JetPack_6.2.2_Linux_jetson-orin-nano-devkit-super/Linux_for_Tegra"
+  mkdir -p "${a}" "${b}"; printf 'phases: [images]\n' >"${a}/.prepared.yaml"; printf 'phases: [bsp]\n' >"${b}/.prepared.yaml"
+  run status_prepare
+  assert_output --partial $'warn\t'
+  assert_output --partial 'more than one'
+}
+
+@test "status_jetson: two boards in recovery → warn says so explicitly" {
+  LSUSB_OUT=$'Bus 003 Device 049: ID 0955:7023 NVIDIA Corp. APX\nBus 001 Device 007: ID 0955:7523 NVIDIA Corp. APX' run status_jetson
+  assert_output --partial '2 in recovery'
+}

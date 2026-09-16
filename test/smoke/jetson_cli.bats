@@ -245,3 +245,71 @@ EOF
   assert_failure
   assert_output --partial 'strict'
 }
+
+# ── review round 1 ───────────────────────────────────────────────────
+
+@test "flash refuses when more than one Jetson is in recovery" {
+  LSUSB_OUT=$'Bus 003 Device 049: ID 0955:7023 NVIDIA Corp. APX\nBus 001 Device 007: ID 0955:7523 NVIDIA Corp. APX' run "${JETSON}" flash
+  assert_failure
+  assert_output --partial '2 Jetsons in recovery'
+  run cat "${CALLS}"
+  refute_output --partial 'nm_flash_guard'
+  refute_output --partial 'make'
+}
+
+@test "wait-rec times out on wall-clock time even when the interval is longer than the timeout" {
+  SECONDS_BEFORE=$SECONDS
+  WAIT_REC_INTERVAL=5 run "${JETSON}" wait-rec 1
+  assert_failure
+  assert_output --partial 'timed out'
+  (( SECONDS - SECONDS_BEFORE < 4 ))
+}
+
+@test "wait-rec rejects a non-positive interval" {
+  WAIT_REC_INTERVAL=0 run "${JETSON}" wait-rec 1
+  assert_failure 2
+  WAIT_REC_INTERVAL=abc run "${JETSON}" wait-rec 1
+  assert_failure 2
+}
+
+@test "all: a Ctrl-C during flash is not reported as 'wait-rec interrupted' (trap restored)" {
+  # make stub for flash: deliver INT to jetson.sh itself (the grandparent —
+  # make runs inside a "(cd && make)" subshell) and die of INT so bash
+  # propagates the signal up the wait chain like a real Ctrl-C would.
+  cat >"${STUB_BIN}/make" <<'EOF'
+#!/usr/bin/env bash
+printf 'make %s\n' "$*" >>"${CALLS}"
+if [[ "$*" == *"-t flash"* ]]; then
+  gp=$(awk '{print $4}' "/proc/${PPID}/stat")
+  kill -INT "${gp}"; kill -INT "$$"; sleep 1
+fi
+EOF
+  chmod +x "${STUB_BIN}/make"
+  WAIT_REC_INTERVAL=0.05 LSUSB_REC_AFTER=1 run "${JETSON}" all
+  assert_failure
+  refute_output --partial 'wait-rec interrupted'
+}
+
+@test "status never prints 'ready' when a check dies mid-way" {
+  printf 'hardware:\n  board: agx-orin\nstorage:\n  device: emmc\nuser:\n  password: x\n' >"${L4T_REPO_ROOT}/jetson.yaml"
+  JETSON_STATUS_CHECKS="status_config __no_such_check status_kernel" LSUSB_OUT="${REC}" run "${JETSON}" status
+  assert_failure
+  assert_output --partial 'internal: __no_such_check'
+  refute_output --partial 'ready'
+}
+
+@test "flash refuses when several .prepared.yaml markers exist (ambiguous L4T tree)" {
+  local other="${L4T_REPO_ROOT}/data/jetson_l4t/JetPack_6.2.2_Linux_jetson-orin-nano-devkit-super/Linux_for_Tegra"
+  mkdir -p "${other}"; cp "${L4T_TREE}/.prepared.yaml" "${other}/"
+  LSUSB_OUT="${REC}" run "${JETSON}" flash
+  assert_failure
+  assert_output --partial 'more than one'
+  run cat "${CALLS}"
+  refute_output --partial 'make'
+}
+
+@test "commands that take no arguments reject extra ones with exit 2" {
+  run "${JETSON}" teardown now
+  assert_failure 2
+  [[ ! -e "${CALLS}" ]]
+}
