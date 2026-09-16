@@ -216,3 +216,60 @@ _valid_loop_repo() {
   run store_marker_validate "${MARKER}" "${REPO}"
   assert_failure
 }
+
+# ── image size ───────────────────────────────────────────────────────
+
+@test "store_size_bytes parses G / M suffixes into bytes" {
+  run store_size_bytes 40G
+  assert_output '42949672960'
+  run store_size_bytes 256M
+  assert_output '268435456'
+}
+
+@test "store_size_bytes rejects garbage, zero and a bare number" {
+  for bad in 0 0G abc 40 -5G 4.5G; do
+    run store_size_bytes "${bad}"
+    assert_failure
+  done
+}
+
+@test "store_size_check enforces the 20G minimum unless overridden" {
+  run store_size_check 20G
+  assert_success
+  run store_size_check 5G
+  assert_failure
+  assert_output --partial 'minimum'
+  L4T_STORE_MIN_SIZE=256M run store_size_check 256M
+  assert_success
+}
+
+@test "store_size_check refuses to shrink an existing image" {
+  local img="${BATS_TEST_TMPDIR}/big.img"
+  truncate -s 40G "${img}"
+  run store_size_check 30G "${img}"
+  assert_failure
+  assert_output --partial 'shrink'
+  run store_size_check 40G "${img}"
+  assert_success
+}
+
+# ── mount identity ───────────────────────────────────────────────────
+
+@test "store_same_inode: same directory via two paths is a match" {
+  mkdir -p "${BATS_TEST_TMPDIR}/x"
+  ln -s "${BATS_TEST_TMPDIR}/x" "${BATS_TEST_TMPDIR}/alias"
+  run store_same_inode "${BATS_TEST_TMPDIR}/x" "${BATS_TEST_TMPDIR}/alias"
+  assert_success
+}
+
+@test "store_same_inode: two different directories do not match" {
+  mkdir -p "${BATS_TEST_TMPDIR}/x" "${BATS_TEST_TMPDIR}/y"
+  run store_same_inode "${BATS_TEST_TMPDIR}/x" "${BATS_TEST_TMPDIR}/y"
+  assert_failure
+}
+
+@test "store_same_inode: a missing path never matches" {
+  mkdir -p "${BATS_TEST_TMPDIR}/x"
+  run store_same_inode "${BATS_TEST_TMPDIR}/x" "${BATS_TEST_TMPDIR}/missing"
+  assert_failure
+}

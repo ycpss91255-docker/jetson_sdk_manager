@@ -157,3 +157,58 @@ store_marker_validate() {
   esac
   return 0
 }
+
+# ── image size ───────────────────────────────────────────────────────
+
+# store_size_bytes <N{M|G}>
+# Echoes the byte count for a size string like 40G / 256M. Rejects anything
+# else (no bare numbers — an ambiguous unit is how you get a 40-byte image).
+store_size_bytes() {
+  local s="$1" n unit
+  [[ "${s}" =~ ^([0-9]+)([MG])$ ]] || return 1
+  n="${BASH_REMATCH[1]}"; unit="${BASH_REMATCH[2]}"
+  (( n > 0 )) || return 1
+  case "${unit}" in
+    M) printf '%s\n' $(( n * 1024 * 1024 )) ;;
+    G) printf '%s\n' $(( n * 1024 * 1024 * 1024 )) ;;
+  esac
+}
+
+# store_size_check <size> [existing_image]
+# 15 GB of L4T tree + rootfs + generated images needs headroom, so 20G is
+# the floor (L4T_STORE_MIN_SIZE overrides it — CI uses a 256M fixture).
+# An existing image is never shrunk: ext4 does not survive a truncate.
+store_size_check() {
+  local size="$1" existing="${2:-}" want have min
+  want="$(store_size_bytes "${size}")" \
+    || { printf 'store: invalid L4T_STORE_SIZE=%s (use e.g. 40G or 256M)\n' "${size}" >&2; return 1; }
+  min="$(store_size_bytes "${L4T_STORE_MIN_SIZE:-20G}")"
+  if (( want < min )); then
+    printf 'store: L4T_STORE_SIZE=%s is below the %s minimum needed for one prepare\n' \
+      "${size}" "${L4T_STORE_MIN_SIZE:-20G}" >&2
+    return 1
+  fi
+  if [[ -n "${existing}" && -f "${existing}" ]]; then
+    have="$(stat -c %s "${existing}")"
+    if (( want < have )); then
+      printf 'store: refusing to shrink existing image %s (%s bytes) to %s\n' \
+        "${existing}" "${have}" "${size}" >&2
+      return 1
+    fi
+  fi
+  return 0
+}
+
+# ── mount identity ───────────────────────────────────────────────────
+
+# store_same_inode <path_a> <path_b>
+# True when both paths resolve to the same device+inode — the reliable way
+# to ask "is /srv/jetson_l4t bound from THIS store?" findmnt renders a
+# bind as DEV[/subtree] and a loop root as plain /dev/loopN, so a string
+# compare against the source path is wrong in both cases.
+store_same_inode() {
+  local a b
+  a="$(stat -L -c '%d:%i' "$1" 2>/dev/null)" || return 1
+  b="$(stat -L -c '%d:%i' "$2" 2>/dev/null)" || return 1
+  [[ "${a}" == "${b}" ]]
+}
