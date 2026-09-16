@@ -57,3 +57,41 @@ store_backend_detect() {
     printf 'loop-image\n'
   fi
 }
+
+# ── marker ───────────────────────────────────────────────────────────
+# data/.l4t_store: versioned key=value, one per line. Written atomically
+# (tmp + rename in the same dir) so a crash mid-write never leaves a
+# half-marker for clean.sh purge to act on.
+
+STORE_MARKER_VERSION=1
+
+# store_repo_id <repo_root>
+# 16 hex chars identifying this checkout by its canonical path. Recorded in
+# the marker so purge refuses to touch a store provisioned by another clone.
+store_repo_id() {
+  local canon
+  canon="$(readlink -f "$1")"
+  printf '%s' "${canon}" | sha256sum | cut -c1-16
+}
+
+# store_marker_write <marker_path> key=value...
+# Always prepends version=${STORE_MARKER_VERSION}.
+store_marker_write() {
+  local marker="$1"; shift
+  local tmp
+  tmp="$(mktemp "${marker}.XXXXXX")"
+  {
+    printf 'version=%s\n' "${STORE_MARKER_VERSION}"
+    printf '%s\n' "$@"
+  } >"${tmp}"
+  mv -f "${tmp}" "${marker}"
+}
+
+# store_marker_read <marker_path> <key>
+# Echoes the value; returns 1 when the file or the key is absent.
+store_marker_read() {
+  local marker="$1" key="$2" line
+  [[ -f "${marker}" ]] || return 1
+  line="$(grep -m1 "^${key}=" "${marker}")" || return 1
+  printf '%s\n' "${line#*=}"
+}
