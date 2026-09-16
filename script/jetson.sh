@@ -310,7 +310,7 @@ _status_srv() {
 }
 
 # The check list is overridable so the test suite can inject a failing one.
-JETSON_STATUS_CHECKS="${JETSON_STATUS_CHECKS:-_status_tools status_config status_store _status_srv status_kernel _status_nm _status_images status_prepare status_jetson}"
+JETSON_STATUS_CHECKS="${JETSON_STATUS_CHECKS:-_status_tools status_config status_store _status_srv status_kernel _status_nm status_usb_ss_guard _status_images status_prepare status_jetson}"
 
 cmd_status() {
   local strict="" bad=0 warn=0 level msg chk out

@@ -15,6 +15,8 @@ L4T_REPO_ROOT="${L4T_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && p
 USBCORE_PARAMS="${USBCORE_PARAMS:-/sys/module/usbcore/parameters}"
 NFSD_SYSFS="${NFSD_SYSFS:-/sys/module/nfsd}"
 STATUS_MOUNTPOINT_BIN="${STATUS_MOUNTPOINT_BIN:-mountpoint}"
+# Must match usb_ss_guard.sh's STATE_FILE default (#100).
+USB_SS_GUARD_STATE="${USB_SS_GUARD_STATE:-/tmp/usb-ss-guard.state}"
 
 _st() { printf '%s\t%s\n' "$1" "$2"; }
 
@@ -139,6 +141,20 @@ status_kernel() {
     _st ok "USB: autosuspend off, usbfs buffer ${m} MB"
   else
     _st warn "USB params at defaults (autosuspend=${a}, usbfs_memory_mb=${m}) — flash may stall; host_setup.sh sets them"
+  fi
+}
+
+# ── USB SuperSpeed guard (#100) ──────────────────────────────────────
+# The guard parks the SS half of the Jetson's connector for the flash and
+# its watcher restores it on boot / timeout. A state file outside a flash
+# means a connector is still at USB 2 — worth a warning, never a blocker.
+status_usb_ss_guard() {
+  local port
+  if [[ -f "${USB_SS_GUARD_STATE}" ]]; then
+    port="$(head -n1 "${USB_SS_GUARD_STATE}" 2>/dev/null || true)"
+    _st warn "USB SuperSpeed half ${port##*/} is disabled by usb_ss_guard — expected during a flash; otherwise ./script/usb_ss_guard.sh enable (or ./jetson teardown)"
+  else
+    _st ok "USB SuperSpeed guard idle — ./jetson flash parks the connector's SS half for the initrd link (usb_ss_guard.sh auto)"
   fi
 }
 

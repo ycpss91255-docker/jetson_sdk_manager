@@ -71,6 +71,8 @@ EOF
   USBCORE_PARAMS="${BATS_TEST_TMPDIR}/usbcore"; mkdir -p "${USBCORE_PARAMS}"; export USBCORE_PARAMS
   printf -- '-1\n' >"${USBCORE_PARAMS}/autosuspend"; printf '2048\n' >"${USBCORE_PARAMS}/usbfs_memory_mb"
   NFSD_SYSFS="${BATS_TEST_TMPDIR}/nfsd"; mkdir -p "${NFSD_SYSFS}"; export NFSD_SYSFS
+  # No SuperSpeed port parked (#100) — keep status hermetic on a host mid-flash.
+  USB_SS_GUARD_STATE="${BATS_TEST_TMPDIR}/usb-ss-guard.state"; export USB_SS_GUARD_STATE
   STAT_BIN="${BATS_TEST_TMPDIR}/stat-ext4"; printf '#!/usr/bin/env bash\necho ext4\n' >"${STAT_BIN}"; chmod +x "${STAT_BIN}"; export STAT_BIN
   cat >"${STUB_BIN}/docker" <<'EOF'
 #!/usr/bin/env bash
