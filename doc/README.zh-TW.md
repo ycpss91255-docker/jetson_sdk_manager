@@ -100,7 +100,7 @@ host 用完了?`./jetson teardown` 在同一次開機內還原 kernel / mount �
 - **`./data/jetson_l4t/` 必須是 ext4 / xfs / btrfs**——`apply_binaries.sh` 會寫 setuid 與 root 擁有的檔案,NTFS / exFAT / FAT 會靜默丟掉,燒出來的 Jetson `sudo` 會壞。你不必搬 repo:在這類 checkout 上 `./jetson prepare`(透過 `host_setup.sh`)會在 **repo 內**建一個 sparse ext4 映像檔(`data/jetson_l4t.img`,邏輯大小 `L4T_STORE_SIZE=40G`)並 loop-mount 到 `data/jetson_l4t/`。需要 `e2fsprogs` + `util-linux`(`mkfs.ext4`、`losetup`)。想改用另一顆 ext4 碟上的目錄?`L4T_STORE_DIR=/path/on/ext4 ./jetson prepare`。loop 路徑比原生 ext4 慢,主要在 rootfs 解壓時。
 - **每次開機**:`./jetson prepare` 會重跑 `host_setup.sh`(QEMU binfmt、`nfsd`、USB autosuspend / buffer、`/srv/jetson_l4t` 橋接、data store 掛載)。重開機後全部歸零;`./jetson status` 會告訴你什麼時候需要再跑。
 - **NetworkManager host**(多數桌機/筆電):不擋的話 NM 會在燒到一半時把 USB 連線拆掉。`./jetson flash` 會幫你跑 `nm_flash_guard.sh auto`;只有確定 host 沒跑 NM 才略過。
-- **USB 3 連接埠**:燒錄用的 initrd 只需要 USB 2,但它的 gadget 也會嘗試建立 SuperSpeed 連線;某些 host 上這條連線永遠訓練不起來,每隔幾秒的重試會把正常的 USB 2 連線一起拆掉(`Waiting for target to boot-up...` 直到逾時)。`./jetson flash` 會幫你跑 `usb_ss_guard.sh auto`:停用 Jetson 那個接頭的 SuperSpeed 半邊(sysfs、開機期)、板子開機後再恢復。細節與手動作法:[doc/TROUBLESHOOTING.md](TROUBLESHOOTING.md#flash-waits-in-waiting-for-target-to-boot-up-while-dmesg-loops-cannot-enable-maybe-the-usb-cable-is-bad)。
+- **USB 3 連接埠**:燒錄用的 initrd 只需要 USB 2,但它的 gadget 也會嘗試建立 SuperSpeed 連線;某些 host 上這條連線永遠訓練不起來,每隔幾秒的重試會把正常的 USB 2 連線一起拆掉(`Waiting for target to boot-up...` 直到逾時)。`./jetson flash` 會幫你跑 `usb_ss_guard.sh auto`:停用 Jetson 那個接頭的 SuperSpeed 半邊(sysfs、開機期),由 root watcher 在板子開機後恢復;若 watcher 起不來,`./script/usb_ss_guard.sh enable`、`./jetson teardown` 或重開機都會還原。細節與手動作法:[doc/TROUBLESHOOTING.md](TROUBLESHOOTING.md#flash-waits-in-waiting-for-target-to-boot-up-while-dmesg-loops-cannot-enable-maybe-the-usb-cable-is-bad)。
 
 ## 設定 `jetson.yaml`
 
