@@ -6,6 +6,9 @@
 # Jetson. Everything here touches the host kernel or Docker and therefore
 # CANNOT be done from inside the container (which shares the host kernel):
 #
+#   0. L4T data store           — on an NTFS / exFAT checkout, loop-mount an
+#                                 in-repo ext4 image over data/jetson_l4t
+#                                 (lib/store.sh, #93)
 #   1. QEMU binfmt              — run the BSP's ARM64 tools during prepare
 #   2. nfsd kernel module       — l4t_initrd_flash serves the flash payload
 #                                 to the Jetson's initrd over a local NFS export
@@ -32,6 +35,13 @@ set -euo pipefail
 
 _HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _REPO="$(cd "${_HERE}/.." && pwd)"
+# Overridable so the bats suite can point data/ at a tmpdir.
+L4T_REPO_ROOT="${L4T_REPO_ROOT:-${_REPO}}"
+
+# shellcheck source=lib/errors.sh
+. "${_HERE}/lib/errors.sh"
+# shellcheck source=lib/store.sh
+. "${_HERE}/lib/store.sh"
 
 # Overridable for tests; defaults are the real kernel sysfs paths / tools.
 USBCORE_PARAMS="${USBCORE_PARAMS:-/sys/module/usbcore/parameters}"
@@ -40,7 +50,7 @@ USBFS_MEMORY_MB="${USBFS_MEMORY_MB:-2048}"
 DOCKER_BIN="${DOCKER_BIN:-docker}"
 # NFS export bridge (step 5). L4T_EXPORT_DIR must match volume.sh's
 # L4T_ROOT_DEFAULT (/srv/jetson_l4t) and setup.conf mount_6's container path.
-L4T_EXPORT_SRC="${L4T_EXPORT_SRC:-${_REPO}/data/jetson_l4t}"
+L4T_EXPORT_SRC="${L4T_EXPORT_SRC:-${L4T_REPO_ROOT}/data/jetson_l4t}"
 # Track whether the caller redirected the export dir (tests do) so the
 # path-contract check below only fires for the real, un-overridden path —
 # a tmpdir override is not a contract violation.
@@ -84,43 +94,47 @@ _assert_path_contract() {
   fi
 }
 
-# _existing_bind_source <mountpoint> — echo the absolute source path backing an
-# existing mount, or empty if it can't be determined. findmnt renders a bind of
-# a subtree as DEV[/abs/path]; a whole-filesystem mount has no [..] suffix.
+# _existing_bind_source <mountpoint> — echo findmnt's SOURCE for an existing
+# mount (DEV[/subtree] for a bind of a subtree, plain DEV for a whole
+# filesystem such as a loop root), or empty if findmnt can't tell.
 _existing_bind_source() {
   command -v "${FINDMNT_BIN}" >/dev/null 2>&1 || return 0
-  local src
-  src="$("${FINDMNT_BIN}" -n -o SOURCE "$1" 2>/dev/null)" || return 0
-  case "${src}" in
-    *'['*']') src="${src##*[}"; printf '%s\n' "${src%]}" ;;
-    *)        printf '\n' ;;
-  esac
+  "${FINDMNT_BIN}" -n -o SOURCE "$1" 2>/dev/null || true
 }
 
-# _assert_export_bind_matches — when ${L4T_EXPORT_DIR} is ALREADY bind-mounted,
-# make sure it points at THIS repo's data/jetson_l4t and not a stale bind left
-# behind by another clone / working directory (#76). The kernel nfsd resolves
-# the export in the host mount namespace (#52), so a stale bind silently makes
-# the flash serve the WRONG images — the flash still succeeds, masking the
-# mismatch. Abort with a concrete remedy instead of reusing the stale bind.
+# _assert_export_bind_matches — when ${L4T_EXPORT_DIR} is ALREADY mounted,
+# make sure it is THIS repo's data/jetson_l4t and not a stale bind left behind
+# by another clone / working directory (#76). The kernel nfsd resolves the
+# export in the host mount namespace (#52), so a stale bind silently makes the
+# flash serve the WRONG images — the flash still succeeds, masking the
+# mismatch. Identity is device+inode (#93): a bind root shares them with its
+# source, whereas findmnt's SOURCE string is DEV[/path] for a directory bind
+# and a bare /dev/loopN for the in-repo image, so a path compare misreads
+# both. The subtree fallback covers a bind whose root was replaced since.
 _assert_export_bind_matches() {
-  local cur want
+  local cur subtree
+  store_same_inode "${L4T_EXPORT_DIR}" "${L4T_EXPORT_SRC}" && return 0
   cur="$(_existing_bind_source "${L4T_EXPORT_DIR}")"
-  [[ -n "${cur}" ]] || return 0   # can't determine the source — leave as-is
-  cur="$(readlink -f "${cur}" 2>/dev/null || printf '%s' "${cur}")"
-  want="$(readlink -f "${L4T_EXPORT_SRC}" 2>/dev/null || printf '%s' "${L4T_EXPORT_SRC}")"
-  [[ "${cur}" == "${want}" ]] && return 0
+  case "${cur}" in
+    *'['*']')
+      subtree="${cur##*[}"; subtree="${subtree%]}"
+      store_same_inode "${subtree}" "${L4T_EXPORT_SRC}" && return 0
+      ;;
+  esac
   printf '\n\033[31m[host-setup] error:\033[0m %s is already bind-mounted from a different source\n' \
     "${L4T_EXPORT_DIR}" >&2
-  printf '    existing: %s\n' "${cur}" >&2
-  printf '    expected: %s   (this repo)\n' "${want}" >&2
+  printf '    existing: %s\n' "${cur:-unknown}" >&2
+  printf '    expected: %s   (this repo)\n' "${L4T_EXPORT_SRC}" >&2
   printf '  A stale bind (e.g. from another clone) makes the flash serve the WRONG images, silently.\n' >&2
   printf '  Clear it, then re-run this script:\n    sudo umount %s\n' "${L4T_EXPORT_DIR}" >&2
   exit 1
 }
 
 main() {
-  _step "1/5 Registering QEMU binfmt (ARM64 emulation for prepare)"
+  _step "0/6 L4T data store (ext4 for data/jetson_l4t)"
+  store_setup "${L4T_REPO_ROOT}"
+
+  _step "1/6 Registering QEMU binfmt (ARM64 emulation for prepare)"
   if command -v "${DOCKER_BIN}" >/dev/null 2>&1; then
     "${DOCKER_BIN}" run --rm --privileged "${QEMU_IMAGE}" --reset -p yes >/dev/null
     _ok "qemu-user-static registered"
@@ -128,19 +142,19 @@ main() {
     printf '  docker not found on PATH — install Docker, then re-run\n' >&2
   fi
 
-  _step "2/5 Loading nfsd kernel module (NFS export for flash)"
+  _step "2/6 Loading nfsd kernel module (NFS export for flash)"
   sudo modprobe nfsd
   _ok "nfsd loaded"
 
-  _step "3/5 Disabling USB autosuspend (prevents mid-flash stalls)"
+  _step "3/6 Disabling USB autosuspend (prevents mid-flash stalls)"
   echo -1 | sudo tee "${USBCORE_PARAMS}/autosuspend" >/dev/null
   _ok "autosuspend = -1"
 
-  _step "4/5 Raising usbfs buffer to ${USBFS_MEMORY_MB} MB (prevents bulk-write stalls)"
+  _step "4/6 Raising usbfs buffer to ${USBFS_MEMORY_MB} MB (prevents bulk-write stalls)"
   echo "${USBFS_MEMORY_MB}" | sudo tee "${USBCORE_PARAMS}/usbfs_memory_mb" >/dev/null
   _ok "usbfs_memory_mb = ${USBFS_MEMORY_MB}"
 
-  _step "5/5 Bridging the NFS export path ${L4T_EXPORT_DIR} into the host namespace"
+  _step "5/6 Bridging the NFS export path ${L4T_EXPORT_DIR} into the host namespace"
   _assert_path_contract
   # l4t_initrd_flash serves the payload from ${L4T_EXPORT_DIR} (volume.sh
   # L4T_ROOT_DEFAULT). The container bind-mounts ./data/jetson_l4t there, but

@@ -212,3 +212,145 @@ store_same_inode() {
   b="$(stat -L -c '%d:%i' "$2" 2>/dev/null)" || return 1
   [[ "${a}" == "${b}" ]]
 }
+
+# ── provisioning (host_setup.sh step 0) ─────────────────────────────
+
+# Overridable for tests; defaults are the real tools. STAT_BIN only serves
+# the fstype probe so a stub cannot disturb store_same_inode's real stat.
+STAT_BIN="${STAT_BIN:-stat}"
+STORE_MOUNT_BIN="${STORE_MOUNT_BIN:-mount}"
+STORE_MOUNTPOINT_BIN="${STORE_MOUNTPOINT_BIN:-mountpoint}"
+
+# store_fstype_of <path>
+store_fstype_of() {
+  "${STAT_BIN}" -f -c %T "$1" 2>/dev/null
+}
+
+# store_paths <repo_root>
+# Sets STORE_DATA_DIR / STORE_MARKER / STORE_IMAGE for the given checkout.
+store_paths() {
+  local repo_root="$1"
+  STORE_DATA_DIR="${repo_root}/data/jetson_l4t"
+  STORE_MARKER="${repo_root}/data/.l4t_store"
+  STORE_IMAGE="${repo_root}/data/jetson_l4t.img"
+}
+
+_store_ok()   { printf '  ok: %s\n' "$1" >&2; }
+_store_warn() { printf '  \033[33mwarning: %s\033[0m\n' "$1" >&2; }
+
+# _store_require_tools <tool>...
+_store_require_tools() {
+  local missing=() t
+  for t in "$@"; do
+    command -v "${t}" >/dev/null 2>&1 || missing+=("${t}")
+  done
+  (( ${#missing[@]} == 0 )) && return 0
+  emit_error \
+    --category host-config \
+    --detail "missing host tool(s) for the L4T data store: ${missing[*]}" \
+    --action "Install them: sudo apt install e2fsprogs util-linux" \
+    --action "Or point L4T_STORE_DIR at an existing ext4 directory to skip the image step"
+  return 1
+}
+
+# _store_owner — the container's non-root user is the invoking host user
+# (USER_UID/GID in .env come from id -u/-g), so chown the store root to the
+# real user even when this runs under sudo.
+_store_owner() {
+  printf '%s:%s' "${SUDO_UID:-$(id -u)}" "${SUDO_GID:-$(id -g)}"
+}
+
+# _store_provision_loop <repo_root>
+_store_provision_loop() {
+  local repo_root="$1" size="${L4T_STORE_SIZE:-40G}"
+  _store_require_tools truncate mkfs.ext4 "${STORE_MOUNT_BIN}" "${STORE_MOUNTPOINT_BIN}" losetup || return 1
+  if [[ ! -f "${STORE_IMAGE}" ]]; then
+    store_size_check "${size}" || return 1
+    # Sparse: logical ${size}, physical grows with use. ntfs-3g honours the
+    # hole on creation; whether later writes stay compact is up to the
+    # driver, so the host still needs the real space free.
+    truncate -s "${size}" "${STORE_IMAGE}"
+    mkfs.ext4 -q -F -m 0 "${STORE_IMAGE}" >/dev/null
+    _store_ok "created ext4 image ${STORE_IMAGE} (${size}, sparse)"
+  else
+    _store_ok "reusing ext4 image ${STORE_IMAGE}"
+  fi
+  if "${STORE_MOUNTPOINT_BIN}" -q "${STORE_DATA_DIR}"; then
+    _store_ok "${STORE_DATA_DIR} already mounted"
+  else
+    if ! sudo "${STORE_MOUNT_BIN}" -o loop "${STORE_IMAGE}" "${STORE_DATA_DIR}"; then
+      emit_error \
+        --category host-config \
+        --detail "loop-mounting ${STORE_IMAGE} on ${STORE_DATA_DIR} failed" \
+        --action "Check the image: sudo e2fsck -f ${STORE_IMAGE}" \
+        --action "If it is beyond repair: ./script/clean.sh purge, then re-run host_setup.sh"
+      return 1
+    fi
+    # Fresh mount root is owned by root; hand it to the container user so
+    # prepare.sh can write. Never recursive — a populated store keeps the
+    # root-owned rootfs files apply_binaries.sh produced.
+    sudo chown "$(_store_owner)" "${STORE_DATA_DIR}"
+    _store_ok "${STORE_DATA_DIR} ← loop ${STORE_IMAGE}"
+  fi
+  store_marker_write "${STORE_MARKER}" backend=loop-image \
+    "repo_id=$(store_repo_id "${repo_root}")" "image=${STORE_IMAGE}"
+}
+
+# _store_provision_dir <repo_root> <store_dir>
+_store_provision_dir() {
+  local repo_root="$1" store="$2" fstype
+  _store_require_tools "${STORE_MOUNT_BIN}" "${STORE_MOUNTPOINT_BIN}" || return 1
+  mkdir -p "${store}"
+  fstype="$(store_fstype_of "${store}")"
+  if ! store_fstype_is_unix "${fstype}"; then
+    emit_error \
+      --category permission \
+      --detail "L4T_STORE_DIR=${store} is on ${fstype}, which cannot preserve setuid / ownership" \
+      --action "Point L4T_STORE_DIR at an ext4 / xfs / btrfs directory, or unset it to use the in-repo ext4 image"
+    return 1
+  fi
+  if "${STORE_MOUNTPOINT_BIN}" -q "${STORE_DATA_DIR}"; then
+    _store_ok "${STORE_DATA_DIR} already mounted"
+  else
+    sudo "${STORE_MOUNT_BIN}" --bind "${store}" "${STORE_DATA_DIR}"
+    _store_ok "${STORE_DATA_DIR} ← bind ${store}"
+  fi
+  store_marker_write "${STORE_MARKER}" backend=directory-bind \
+    "repo_id=$(store_repo_id "${repo_root}")" "store=${store}"
+}
+
+# store_setup <repo_root>
+# Make ${repo_root}/data/jetson_l4t a unix filesystem. An existing marker
+# wins over re-detection (a moved checkout still finds its image); a
+# marker that fails validation aborts rather than provisioning on top.
+store_setup() {
+  local repo_root="$1" backend fstype
+  store_paths "${repo_root}"
+  mkdir -p "${STORE_DATA_DIR}"
+
+  if [[ -f "${STORE_MARKER}" ]]; then
+    store_marker_validate "${STORE_MARKER}" "${repo_root}" || return 1
+    backend="$(store_marker_read "${STORE_MARKER}" backend)"
+  else
+    fstype="$(store_fstype_of "${STORE_DATA_DIR}")"
+    backend="$(store_backend_detect "${fstype}")" || return 1
+  fi
+
+  case "${backend}" in
+    native)
+      _store_ok "native unix filesystem (${fstype:-marker}) — nothing to provision"
+      ;;
+    loop-image)
+      _store_provision_loop "${repo_root}" || return 1
+      ;;
+    directory-bind)
+      local store
+      store="${L4T_STORE_DIR:-$(store_marker_read "${STORE_MARKER}" store 2>/dev/null || true)}"
+      [[ -n "${store}" ]] || { printf 'store: directory-bind needs L4T_STORE_DIR\n' >&2; return 1; }
+      _store_provision_dir "${repo_root}" "${store}" || return 1
+      ;;
+  esac
+  # Exported for the caller's banner / follow-up steps (host_setup.sh).
+  # shellcheck disable=SC2034
+  STORE_BACKEND="${backend}"
+}
