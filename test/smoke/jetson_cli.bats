@@ -120,7 +120,7 @@ EOF
   assert_output --partial '192.168.55.1'
   run grep -vE '^(lsusb|sudo)' "${CALLS}"
   assert_line --index 0 'nm_flash_guard.sh auto'
-  assert_line --index 1 'make run -- -t flash'
+  assert_line --index 2 'make run -- -t flash'
 }
 
 @test "flash order is nm_flash_guard auto → usb_ss_guard auto → make run -t flash (#100)" {
@@ -195,7 +195,8 @@ EOF
   assert_line --index 1 'init_data_dirs.sh '
   assert_line --index 2 'make run -- -t prepare'
   assert_line --index 3 'nm_flash_guard.sh auto'
-  assert_line --index 4 'make run -- -t flash'
+  assert_line --index 4 'usb_ss_guard.sh auto'
+  assert_line --index 5 'make run -- -t flash'
 }
 
 @test "all stops after a failed prepare and tells the user how to resume" {
@@ -373,7 +374,8 @@ EOF
   assert_line --index 0 'host_setup.sh '
   assert_line --index 2 'make run -- -t prepare'
   assert_line --index 3 'nm_flash_guard.sh auto'
-  assert_line --index 4 'make run -- -t flash'
+  assert_line --index 4 'usb_ss_guard.sh auto'
+  assert_line --index 5 'make run -- -t flash'
 }
 
 @test "flash validates sudo once before the NetworkManager guard (nm_flash_guard needs root)" {
