@@ -1,10 +1,12 @@
 #!/usr/bin/env bats
 #
 # Unit tests for script/usb_ss_guard.sh (#100) — disable the SuperSpeed half
-# of the Jetson's USB-C connector for the initrd flash. sysfs is a fixture
-# tree under the test tmpdir (USB_SYSFS), the state dir is a tmpdir
-# (USB_SS_GUARD_STATE_DIR), sudo is a pass-through stub and lsusb is stubbed
-# for the watcher, so nothing here needs root or hardware.
+# of the Jetson's USB-C connector for the initrd flash. The guard's ONLY
+# override is the explicit test mode USB_SS_GUARD_TEST_ROOT=<dir>: sysfs is
+# then <dir>/sys, the state dir <dir>/run, and sudo is not used at all
+# (USB_SYSFS / USB_SS_GUARD_STATE_DIR in the environment are ignored — see
+# the "production paths" tests). lsusb is stubbed for the watcher, so
+# nothing here needs root or hardware.
 #
 # Fixture mirrors this host (issue #100): the recovery device enumerates at
 # high speed as 3-1 on root hub usb3 (speed 480; usb3-port1, location
@@ -26,11 +28,11 @@ setup() {
   done
   [[ -n "${GUARD_SH:-}" ]] || skip "script/usb_ss_guard.sh not present in this image"
 
-  SYS="${BATS_TEST_TMPDIR}/sysfs"
-  export USB_SYSFS="${SYS}"
+  TEST_ROOT="${BATS_TEST_TMPDIR}/root"
+  export USB_SS_GUARD_TEST_ROOT="${TEST_ROOT}"
+  SYS="${TEST_ROOT}/sys"
   # Not pre-created: the guard makes it (root-owned 0755 for real; ours here).
-  STATE_DIR="${BATS_TEST_TMPDIR}/run/usb-ss-guard"
-  export USB_SS_GUARD_STATE_DIR="${STATE_DIR}"
+  STATE_DIR="${TEST_ROOT}/run"
   STATE="${STATE_DIR}/state"
   PIDFILE="${STATE_DIR}/watch.pid"
   FAILED="${STATE_DIR}/watch.failed"
@@ -64,9 +66,6 @@ setup() {
 
   STUB_BIN="${BATS_TEST_TMPDIR}/stub-bin"
   mkdir -p "${STUB_BIN}"
-  # sudo: strip leading flags, exec the rest (the fixture files are writable).
-  printf '%s\n' '#!/usr/bin/env bash' 'while [[ "$1" == -* ]]; do shift; done' 'exec "$@"' \
-    >"${STUB_BIN}/sudo"
   # lsusb: LSUSB_OUT is what the bus looks like (default: nothing NVIDIA).
   printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "${LSUSB_OUT:-}"' >"${STUB_BIN}/lsusb"
   chmod +x "${STUB_BIN}"/*
@@ -115,11 +114,23 @@ _mk_dev() {
 
 _state_port()  { sed -n 's/^port=//p' "${STATE}"; }
 _state_token() { sed -n 's/^token=//p' "${STATE}"; }
-# sudo that reports success but writes nothing (the read-back must catch it).
-_stub_sudo_noop() {
+# tee that reports success but writes nothing — a sysfs write the kernel
+# swallowed; the read-back must catch it. (Test mode uses no sudo, so the
+# write itself is what gets stubbed.)
+_stub_tee_noop() {
   local d="${BATS_TEST_TMPDIR}/stub-noop"
   mkdir -p "${d}"
-  printf '%s\n' '#!/usr/bin/env bash' 'cat >/dev/null 2>&1; exit 0' >"${d}/sudo"
+  printf '%s\n' '#!/usr/bin/env bash' 'cat >/dev/null 2>&1; exit 0' >"${d}/tee"
+  chmod +x "${d}/tee"
+  export PATH="${d}:${PATH}"
+}
+# sudo that only records its argv (never runs anything) — for the
+# production-path tests, which run WITHOUT test mode.
+_stub_sudo_log() {
+  SUDO_LOG="${BATS_TEST_TMPDIR}/sudo.log"; export SUDO_LOG
+  local d="${BATS_TEST_TMPDIR}/stub-sudolog"
+  mkdir -p "${d}"
+  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*" >>"${SUDO_LOG}"; exit 0' >"${d}/sudo"
   chmod +x "${d}/sudo"
   export PATH="${d}:${PATH}"
 }
@@ -277,8 +288,8 @@ _wait_for() {
   assert_output '0'
 }
 
-@test "disable fails (exit 1, no state) when the sudo write does not take" {
-  _stub_sudo_noop
+@test "disable fails (exit 1, no state) when the write does not take" {
+  _stub_tee_noop
   run bash -c "'${GUARD_SH}' disable 2>&1"
   assert_failure 1
   assert_output --partial 'could not'
@@ -332,7 +343,7 @@ _wait_for() {
 
 @test "enable fails (exit 1, state kept) when the write does not take" {
   bash -c "'${GUARD_SH}' disable" 2>/dev/null
-  _stub_sudo_noop
+  _stub_tee_noop
   run bash -c "'${GUARD_SH}' enable 2>&1"
   assert_failure 1
   assert_output --partial 'could not re-enable'
@@ -481,7 +492,7 @@ _wait_for() {
   bash -c "'${GUARD_SH}' disable" 2>/dev/null
   local tok
   tok="$(_state_token)"
-  _stub_sudo_noop
+  _stub_tee_noop
   run bash -c "'${GUARD_SH}' _watch 1 '${tok}' 2>&1"
   assert_success
   [[ -e "${FAILED}" ]]
@@ -536,13 +547,14 @@ _wait_for() {
   assert_output '1'
 }
 
-@test "auto warns and leaves the port parked when the root watcher cannot be started (sudo -n refused)" {
-  local d="${BATS_TEST_TMPDIR}/stub-nosudo-n"
+@test "auto warns and leaves the port parked when the watcher cannot be started (spawn fails)" {
+  # In production this is `sudo -n` refusing; test mode uses no sudo, so
+  # the detach step (setsid) is what fails here. Either way _spawn returns
+  # non-zero and auto must report it, not hang or pretend.
+  local d="${BATS_TEST_TMPDIR}/stub-nosetsid"
   mkdir -p "${d}"
-  # sudo -n (the watcher spawn) is refused; plain sudo (the sysfs writes) passes through.
-  printf '%s\n' '#!/usr/bin/env bash' '[[ "$1" == -n ]] && exit 1' \
-    'while [[ "$1" == -* ]]; do shift; done' 'exec "$@"' >"${d}/sudo"
-  chmod +x "${d}/sudo"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"${d}/setsid"
+  chmod +x "${d}/setsid"
   PATH="${d}:${PATH}" run bash -c "'${GUARD_SH}' auto 30 2>&1"
   assert_success
   assert_output --partial 'could not start'
@@ -551,4 +563,74 @@ _wait_for() {
   [[ -e "${STATE}" ]]
   run cat "${JETSON_SS_PORT}/disable"
   assert_output '1'
+}
+
+@test "auto rejects a non-integer USB_SS_GUARD_TIMEOUT default (exit 2) before touching anything" {
+  USB_SS_GUARD_TIMEOUT=abc run bash -c "'${GUARD_SH}' auto 2>&1"
+  assert_failure 2
+  assert_output --partial 'timeout'
+  [[ ! -e "${STATE}" ]]
+  run cat "${JETSON_SS_PORT}/disable"
+  assert_output '0'
+}
+
+@test "_watch rejects a non-integer poll interval / timeout before touching anything" {
+  bash -c "'${GUARD_SH}' disable" 2>/dev/null
+  USB_SS_GUARD_POLL_INTERVAL='a[$(true)]' run bash -c "'${GUARD_SH}' _watch 1 '$(_state_token)' 2>&1"
+  assert_failure 2
+  run bash -c "'${GUARD_SH}' _watch abc '$(_state_token)' 2>&1"
+  assert_failure 2
+  run cat "${JETSON_SS_PORT}/disable"
+  assert_output '1'
+  [[ ! -e "${PIDFILE}" ]]
+}
+
+# ── production paths are literal (test mode is the only override) ────
+
+@test "test mode announces itself; production mode does not" {
+  run bash -c "'${GUARD_SH}' status 2>&1"
+  assert_success
+  assert_output --partial '[test mode]'
+  _stub_sudo_log
+  USB_SS_GUARD_TEST_ROOT= run bash -c "'${GUARD_SH}' status 2>&1"
+  assert_success
+  refute_output --partial '[test mode]'
+}
+
+@test "without test mode, USB_SYSFS / USB_SS_GUARD_STATE_DIR in the environment are ignored (disable)" {
+  # Assumes no Jetson in recovery is attached to the machine running this
+  # suite (CI has none): the guard looks in the real /sys/bus/usb/devices,
+  # finds nothing to guard and exits 0 — and must never touch our fixture.
+  _stub_sudo_log
+  USB_SS_GUARD_TEST_ROOT= USB_SYSFS="${SYS}" USB_SS_GUARD_STATE_DIR="${STATE_DIR}" \
+    run bash -c "'${GUARD_SH}' disable 2>&1"
+  assert_success
+  assert_output --partial 'no Jetson'
+  refute_output --partial "${SYS}"
+  [[ ! -e "${STATE_DIR}" ]]
+  run cat "${JETSON_SS_PORT}/disable"
+  assert_output '0'
+  # Whatever sudo was asked to do, it named no path of ours.
+  [[ ! -e "${SUDO_LOG}" ]] || ! grep -q "${BATS_TEST_TMPDIR}" "${SUDO_LOG}"
+}
+
+@test "without test mode, a planted state under an environment-chosen dir is never read or written (enable / status)" {
+  mkdir -p -m 0755 "${STATE_DIR}"
+  printf 'port=%s\ntoken=deadbeef\n' "${JETSON_SS_PORT}" >"${STATE}"
+  printf '1\n' >"${JETSON_SS_PORT}/disable"
+  _stub_sudo_log
+  USB_SS_GUARD_TEST_ROOT= USB_SYSFS="${SYS}" USB_SS_GUARD_STATE_DIR="${STATE_DIR}" \
+    run bash -c "'${GUARD_SH}' enable 2>&1"
+  assert_success
+  assert_output --partial 'nothing to re-enable'
+  assert_output --partial '/run/usb-ss-guard/state'
+  [[ -e "${STATE}" ]]
+  run cat "${JETSON_SS_PORT}/disable"
+  assert_output '1'
+  [[ ! -e "${SUDO_LOG}" ]]
+  USB_SS_GUARD_TEST_ROOT= USB_SYSFS="${SYS}" USB_SS_GUARD_STATE_DIR="${STATE_DIR}" \
+    run bash -c "'${GUARD_SH}' status 2>&1"
+  assert_success
+  assert_output --partial 'ENABLED'
+  refute_output --partial 'usb2-port3'
 }

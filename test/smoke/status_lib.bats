@@ -20,6 +20,8 @@ setup() {
     skip "script/lib/status.sh not present in this image"
   fi
 
+  # usb.sh resolves the usb_ss_guard paths when sourced: test mode first.
+  USB_SS_GUARD_TEST_ROOT="${BATS_TEST_TMPDIR}/ssroot"; export USB_SS_GUARD_TEST_ROOT
   # shellcheck disable=SC1091
   . "${LIB_DIR}/errors.sh"
   # shellcheck disable=SC1091
@@ -49,10 +51,11 @@ EOF
   USBCORE_PARAMS="${BATS_TEST_TMPDIR}/usbcore"; mkdir -p "${USBCORE_PARAMS}"; export USBCORE_PARAMS
   printf -- '-1\n' >"${USBCORE_PARAMS}/autosuspend"; printf '2048\n' >"${USBCORE_PARAMS}/usbfs_memory_mb"
   NFSD_SYSFS="${BATS_TEST_TMPDIR}/sys-module-nfsd"; export NFSD_SYSFS
-  # usb_ss_guard (#100): state dir + a sysfs fixture with one root-hub port.
-  USB_SS_GUARD_STATE_DIR="${BATS_TEST_TMPDIR}/run/usb-ss-guard"; export USB_SS_GUARD_STATE_DIR
+  # usb_ss_guard (#100): explicit test mode — sysfs and state under one
+  # root (the production paths are literal and not overridable otherwise).
+  USB_SS_GUARD_STATE_DIR="${USB_SS_GUARD_TEST_ROOT}/run"
   mkdir -p "${USB_SS_GUARD_STATE_DIR}"
-  USB_SYSFS="${BATS_TEST_TMPDIR}/sysfs"; export USB_SYSFS
+  USB_SYSFS="${USB_SS_GUARD_TEST_ROOT}/sys"
   SS_PORT="${USB_SYSFS}/usb2/2-0:1.0/usb2-port3"
   mkdir -p "${SS_PORT}"
   printf '0\n' >"${SS_PORT}/disable"
