@@ -51,7 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: L4T data-store loop lifecycle (setup → teardown → purge)
-        run: test/system/store_loop_system.sh
+        run: bash test/system/store_loop_system.sh
 
   call-docker-build:
     needs: base-ref-drift
