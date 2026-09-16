@@ -54,6 +54,8 @@ exit 1
 EOF
   chmod +x "${STUB_BIN}"/*
   export PATH="${STUB_BIN}:${PATH}"
+  # No readable export table by default → status falls back to `exportfs -s`.
+  export NFS_ETAB="${BATS_TEST_TMPDIR}/no-such-etab"
 
   # A prepared tree as the HOST sees it (the /srv bridge).
   L4T="${BATS_TEST_TMPDIR}/srv/jetson_l4t/JetPack_6.2.2_Linux_jetson-agx-orin-devkit/Linux_for_Tegra"
@@ -221,6 +223,23 @@ EOF
   assert_output --partial 'rpc.mountd'
   assert_output --partial 'kernel_flash/images'
   assert_output --partial 'hang'
+}
+
+@test "nfs_export_status: reads the export table (etab) when readable — exportfs -s needs root for its lock" {
+  # etab lines are "<path>\t<client>(<opts>)"; exportfs -s is made to fail.
+  printf '%s\t[fc00:1:1::/48](rw,async,no_root_squash)\n' \
+    "${L4T}/rootfs" "${L4T}/tools/kernel_flash/images" "${L4T}/tools/kernel_flash/tmp" >"${BATS_TEST_TMPDIR}/etab"
+  cat >"${STUB_BIN}/exportfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'exportfs: could not open /var/lib/nfs/.etab.lock for locking: errno 13 (Permission denied)\n' >&2
+exit 0
+EOF
+  chmod +x "${STUB_BIN}/exportfs"
+  MOUNTD=1 NFS_ETAB="${BATS_TEST_TMPDIR}/etab" run nfs_export_status "${L4T}"
+  assert_success
+  assert_output --partial $'ok\t'
+  refute_output --partial $'warn\t'
+  [[ ! -e "${EXPORTFS_LOG}" ]]   # never shelled out to exportfs
 }
 
 @test "nfs_export_status: exportfs installed but no rpc.mountd → ok (no competing mountd)" {
