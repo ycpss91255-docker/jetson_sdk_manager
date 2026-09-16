@@ -21,6 +21,16 @@ The store lifecycle (`host_setup.sh` step 0 → `host_teardown.sh` → `clean.sh
 
 **HITL-only for this feature:** the system job forces `L4T_STORE_BACKEND=loop-image` on an ext4 runner. It proves the loop lifecycle, not ntfs-3g behaviour — sparse-file allocation and prepare throughput through ext4 → loop → FUSE → NTFS can only be observed on a real NTFS checkout.
 
+## Test levels for the host NFS export (#101)
+
+`script/lib/nfs_export.sh` — exporting the prepared L4T tree from the host `nfs-kernel-server` so the host's `rpc.mountd` stops answering the board with an empty export table.
+
+| Level | Where | What it proves | Runs in |
+|---|---|---|---|
+| **Unit** | `test/smoke/nfs_export_lib.bats` | The three paths; per path `exportfs -u` → `-o rw,nohide,insecure,no_subtree_check,async,no_root_squash "[fc00:1:1::/48]:<path>"`, then one `exportfs -f`; a failed unexport does not stop the export; re-run idempotent; no `exportfs` on PATH → message + exit 0, nothing touched; missing `rootfs` / `images` → `emit_error host-config`, exit 1, nothing exported; `tools/kernel_flash/tmp` created when missing; IPv4 client gets no brackets; `nfs_export_off` unexports the three + flushes and ignores "not exported"; `nfs_host_mountd_running` via `pgrep -x`; status reads `/var/lib/nfs/etab` (no sudo) and is ok / warn per host mountd × exports; the single `.prepared.yaml` maps to the `/srv` path (0 → 1, 2 → 2). | `devel-test` stage |
+| **Integration** | `test/smoke/host_setup.bats`, `host_teardown.bats`, `jetson_cli.bats` | `host_setup.sh` exports after the `/srv` bridge with the host paths, and skips with a message when nothing is prepared; `host_teardown.sh` unexports *before* the bridge umount; `./jetson flash` re-exports after `sudo -v` and before `nm_flash_guard`, and stops before the guard when the export fails; `./jetson status` ⚠ on host `rpc.mountd` + missing exports, quiet otherwise, never sudo. `exportfs` / `pgrep` / `sudo` stubbed on PATH. | `devel-test` stage |
+| **System / Acceptance** | HITL | A host that runs `nfs-kernel-server` flashes end to end; `grep -E '^rc\|^net' /proc/net/rpc/nfsd` moves as soon as the export is in place; a re-prepare does not produce *Stale file handle*. Verified once on AGX Orin 64 GB, 2026-09-16 (manual `exportfs`, before this code). | hardware only |
+
 ## Verification status (per preset)
 
 Be honest about what has actually been flashed versus what is only known to build and validate.

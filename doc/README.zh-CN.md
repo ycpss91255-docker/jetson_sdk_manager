@@ -454,7 +454,7 @@ make run -- -t flash
 
 ### Flash 烧到一半卡住 / 「Flashing - 99%」 / `mount.nfs: No such file or directory`
 
-容器内 flash（任一路径）烧到一半卡住，几乎总是 **host 的 NetworkManager** 对 Jetson 的 USB gadget 接口做 DHCP 探测、超时、并在传输途中移除地址 —— 这是 [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48) 追查到的根因。烧录前跑 `./script/nm_flash_guard.sh auto`（它会把接口标记为 unmanaged，并在板子开机后重新启用 NM）。若你看到的是 `mount.nfs: ... No such file or directory`，则是缺了 host 的 `/srv/jetson_l4t` 桥接 —— `./script/host_setup.sh` 会设好它（步骤 5/5）。
+容器内 flash（任一路径）烧到一半卡住，几乎总是 **host 的 NetworkManager** 对 Jetson 的 USB gadget 接口做 DHCP 探测、超时、并在传输途中移除地址 —— 这是 [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48) 追查到的根因。烧录前跑 `./script/nm_flash_guard.sh auto`（它会把接口标记为 unmanaged，并在板子开机后重新启用 NM）。若你看到的是 `mount.nfs: ... No such file or directory`，则是缺了 host 的 `/srv/jetson_l4t` 桥接 —— `./script/host_setup.sh` 会设好它（步骤 5/7）。
 
 ### SDK Manager：「Device mode forwarding host setup failed」
 

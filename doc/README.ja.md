@@ -456,7 +456,7 @@ make run -- -t flash
 
 ### フラッシュが転送途中で停止 / 「Flashing - 99%」 / `mount.nfs: No such file or directory`
 
-コンテナ内フラッシュ（どちらの経路でも）が途中で停止するのは、ほぼ常に **host の NetworkManager** が Jetson の USB gadget インターフェースを DHCP プローブし、タイムアウトして、転送の途中でアドレスを削除していることが原因です — [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48) で突き止めた根本原因です。フラッシュ前に `./script/nm_flash_guard.sh auto` を実行してください（インターフェースを unmanaged にマークし、ボード起動時に NM を再有効化します）。代わりに `mount.nfs: ... No such file or directory` が出る場合は、host の `/srv/jetson_l4t` ブリッジが欠けています — `./script/host_setup.sh` がそれをセットアップします（step 5/5）。
+コンテナ内フラッシュ（どちらの経路でも）が途中で停止するのは、ほぼ常に **host の NetworkManager** が Jetson の USB gadget インターフェースを DHCP プローブし、タイムアウトして、転送の途中でアドレスを削除していることが原因です — [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48) で突き止めた根本原因です。フラッシュ前に `./script/nm_flash_guard.sh auto` を実行してください（インターフェースを unmanaged にマークし、ボード起動時に NM を再有効化します）。代わりに `mount.nfs: ... No such file or directory` が出る場合は、host の `/srv/jetson_l4t` ブリッジが欠けています — `./script/host_setup.sh` がそれをセットアップします（step 5/7）。
 
 ### SDK Manager：「Device mode forwarding host setup failed」
 
