@@ -77,7 +77,7 @@ status_prepare() {
   local marker missing="" p n
   n="$(status_markers | grep -c . || true)"
   if (( n == 0 )); then
-    _st warn "prepare has not run — ./jetson prepare (~30 min, no board needed)"
+    _st warn "prepare has not run — put the board in recovery, then ./jetson prepare (~30 min; its last step reads the board spec over USB)"
     return 0
   elif (( n > 1 )); then
     _st warn "more than one prepared L4T tree under data/jetson_l4t (${n}) — ambiguous; ./script/clean.sh l4t and re-run ./jetson prepare"

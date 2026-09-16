@@ -222,3 +222,11 @@ _level() { cut -f1; }
   LSUSB_OUT=$'Bus 003 Device 049: ID 0955:7023 NVIDIA Corp. APX\nBus 001 Device 007: ID 0955:7523 NVIDIA Corp. APX' run status_jetson
   assert_output --partial '2 in recovery'
 }
+
+# ── #97 ─────────────────────────────────────────────────────────────
+
+@test "status_prepare: wording no longer promises 'no board needed'" {
+  run status_prepare
+  refute_output --partial 'no board needed'
+  assert_output --partial 'recovery'
+}
