@@ -2,100 +2,108 @@
 
 [![CI](https://github.com/ycpss91255-docker/jetson_sdk_manager/actions/workflows/main.yaml/badge.svg)](https://github.com/ycpss91255-docker/jetson_sdk_manager/actions/workflows/main.yaml) [![License](https://img.shields.io/badge/License-Apache--2.0-blue?style=flat-square)](./LICENSE)
 
-Containerized NVIDIA Jetson Linux (L4T) factory-flash workflow for Jetson Orin devices (AGX Orin, Orin NX, Orin Nano). Wraps `l4t_initrd_flash.sh --no-flash` / `--flash-only` from the official BSP archive into two reproducible Docker stages. Built on [`ycpss91255-docker/base`](https://github.com/ycpss91255-docker/base). The repo (and the canonical slug used in URLs and badges) is **`jetson_sdk_manager`**.
+Flash a **Jetson Orin** (AGX Orin, Orin NX, Orin Nano) from any x86_64 Linux box with **three commands**. NVIDIA's `l4t_initrd_flash.sh` runs inside Docker, so the host needs Docker and nothing else — no SDK Manager, no NVIDIA login. Built on [`ycpss91255-docker/base`](https://github.com/ycpss91255-docker/base).
 
 **[English](README.md)** | **[繁體中文](doc/README.zh-TW.md)** | **[简体中文](doc/README.zh-CN.md)** | **[日本語](doc/README.ja.md)**
 
----
-
-## Supported versions
-
-Today this repo supports **exactly one** JetPack / L4T release:
-
-| JetPack | L4T release | Status |
+| JetPack | L4T | Status |
 |---|---|---|
-| 6.2.2 | R36.5.0 (`r36_release_v5.0`) | Supported (only) |
-
-Other JetPack versions are **not** wired up yet. Adding one is a single-file edit: append an entry under `jetpack_to_l4t` in [`config/jetson/_l4t_mapping.yaml`](config/jetson/_l4t_mapping.yaml) (L4T release + BSP / rootfs URLs from the [Jetson Linux Archive](https://developer.nvidia.com/embedded/jetson-linux-archive)), then rebuild. See [Configure `jetson.yaml`](#configure-jetsonyaml).
+| **6.2.2** | R36.5.0 (`r36_release_v5.0`) | the only release wired up today — [add another](#configure-jetsonyaml) |
 
 ---
 
-## Table of Contents
-
-- [Supported versions](#supported-versions)
-- [Before you start](#before-you-start)
-- [TL;DR](#tldr)
+- [Quick start](#quick-start)
+- [Entering recovery (REC) mode](#entering-recovery-rec-mode)
+- [After the flash](#after-the-flash)
 - [Prerequisites](#prerequisites)
 - [Configure `jetson.yaml`](#configure-jetsonyaml)
-- [Quick Start](#quick-start)
-- [Verification status](#verification-status)
-- [Two flashing paths](#two-flashing-paths)
-- [Stages](#stages)
-- [Clean Targets](#clean-targets)
-- [Removing the repo](#removing-the-repo)
-- [SDK Manager (cli / gui)](#sdk-manager-cli--gui)
-- [Persistent Data](#persistent-data)
-- [Architecture](#architecture)
-- [Smoke Tests](#smoke-tests)
-- [Directory Structure](#directory-structure)
+- [Data, cleanup, removing the repo](#data-cleanup-removing-the-repo)
 - [Troubleshooting](#troubleshooting)
+- [Going deeper](#going-deeper)
 
----
-
-## Before you start
-
-> **What a first flash expects (read this once):**
-> - **Host**: an x86_64 **Linux** machine (not a VM-on-Mac, not WSL for the flash phase).
-> - **Data dir filesystem**: `./data/jetson_l4t/` must be **ext4 / xfs / btrfs**. On an NTFS / exFAT checkout (`df -T .` shows `fuseblk` / `ntfs` / `exfat` / `vfat`) `host_setup.sh` handles it for you: it creates an ext4 image **inside the repo** (`data/jetson_l4t.img`) and loop-mounts it — nothing lands outside the checkout. See [Prerequisites](#prerequisites).
-> - **One USB-C cable** between the host and the Jetson's front-panel port.
-> - **Time**: roughly **40 minutes** end to end (~30 min `prepare` + ~10 min `flash`), plus the one-time BSP download.
->
-> **First-timer gates — confirm BOTH before the first command:**
-> 1. **Use a real `git clone`, not a downloaded ZIP.** This repo carries the shared template as a Git subtree under `.base/`; GitHub's "Download ZIP" omits it and the build breaks. Clone with `git`.
-> 2. **You can run `docker` without `sudo`.** Verify with `docker run --rm hello-world`. If it needs `sudo`, add yourself to the `docker` group (`sudo usermod -aG docker "$USER"`, then log out and back in).
->
-> **Terms used below:**
-> - **APX / recovery (REC)** — the Jetson's Boot ROM USB-flashing mode. You enter it by holding the **REC** button while powering on; the host then sees the board as USB `0955:7xxx`. "APX recovery" and "recovery mode (REC)" mean the same thing throughout this README.
-> - On a **NetworkManager** host (most laptops/desktops), `./script/nm_flash_guard.sh auto` is effectively **mandatory** — without it NM tears down the USB transfer mid-flash. See the [NetworkManager note](#quick-start) under Quick Start.
-
-## TL;DR
-
-The happy path, for an AGX Orin devkit flashing to eMMC. (Other presets follow the same steps; see [Configure `jetson.yaml`](#configure-jetsonyaml).)
+## Quick start
 
 ```bash
-./script/host_setup.sh                                # one-time per boot: qemu + nfsd + USB tweaks (run on host)
-./script/init_data_dirs.sh                            # first run only: pre-create data/ mounts as you, not root
-ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml   # pick a preset
+git clone https://github.com/ycpss91255-docker/jetson_sdk_manager.git   # git clone, NOT "Download ZIP" (the .base/ subtree is missing from the zip)
+cd jetson_sdk_manager
 
-make run -- -t prepare    # Phase 1: download BSP + build flash images (~30 min)
-# Put Jetson in APX recovery (REC): power off, hold REC, reconnect power, release
-./script/nm_flash_guard.sh auto   # stop NetworkManager tearing down the USB transfer; auto-restores when the board boots
-make run -- -t flash      # Phase 2: write images to Jetson (~10 min)
-
-# ...or, with the Jetson already in APX recovery (REC), do both in one command:
-make run -- -t prepare && ./script/nm_flash_guard.sh auto && make run -- -t flash
+./jetson status      # what is ready, what is not — fix any ✘ it shows
+./jetson prepare     # host setup (asks for sudo once) + download BSP + build flash images. ~30 min, no board needed
+#   → put the Jetson into recovery: see the next section
+./jetson flash       # write the images over USB. ~10 min
 ```
 
-> `./script/host_setup.sh` bundles the per-boot host prerequisites (see [Prerequisites](#prerequisites)); `make run` auto-builds a missing stage image on first invocation. For an explained walkthrough — `make build` per stage, post-flash `nvidia-jetpack` install, headless access, and resume behaviour — see [Quick Start](#quick-start). For how the two flash mechanisms differ, see [Two flashing paths](#two-flashing-paths).
+`./jetson all` does the three in a row and waits for you to put the board into recovery in between. Everything `./jetson` runs is an ordinary script or `make` target — see [Going deeper](#going-deeper).
+
+What it takes: an x86_64 Linux host with Docker (usable without `sudo`), one USB-C cable, ~20 GB free, and roughly 40 minutes the first time (later runs skip the download and the finished steps). A checkout on NTFS / exFAT is fine — `prepare` handles it ([how](#prerequisites)).
+
+## Entering recovery (REC) mode
+
+The Jetson's Boot ROM only accepts a flash while the board is in **Force Recovery** ("REC" / "APX" / "RCM" — same thing). You enter it with the buttons on the devkit; the host then sees a USB device `0955:7023`-ish instead of the booted OS.
+
+**AGX Orin Developer Kit** — the three buttons are under the front edge, next to a USB-C port:
+
+```
+  front edge of the AGX Orin devkit (viewed from the front)
+
+   ┌──────────┐    ┌─────┐  ┌─────┐  ┌─────┐
+   │  USB-C   │    │ PWR │  │ REC │  │ RST │
+   └──────────┘    └─────┘  └─────┘  └─────┘
+     ▲ this port      power   force    reset
+     (next to the             recovery
+      buttons)
+```
+
+1. Disconnect the power supply.
+2. Connect the USB-C cable from **the USB-C port next to the buttons** to the host. Direct connection — no hub.
+3. **Hold REC** (the middle button).
+4. Reconnect power (or press PWR while still holding REC).
+5. Release REC after about 2 seconds.
+
+Alternative when the board is already powered: hold **REC**, tap **RST**, release REC after ~2 s.
+
+**Orin NX / Orin Nano Developer Kit** — the carrier has no buttons. Short the **`FC REC`** and **`GND`** pins on the 12-pin button header (J14) with a jumper wire, then apply power (or tap `RST`), then remove the jumper. Pin names are printed on the carrier; the official user guide has the photo.
+
+Check from the host:
+
+```bash
+./jetson status          # last line: "Jetson in recovery: … 0955:7023 NVIDIA Corp. APX"
+./jetson wait-rec        # or: print these steps and wait until the board shows up
+```
+
+| USB ID the host sees | Meaning |
+|---|---|
+| `0955:7023` (AGX Orin) · `7223` · `7423` · `7523` · `7e19` — `NVIDIA Corp. APX` | in recovery — ready to flash (the PID encodes the module SKU; `script/lib/usb.sh` is the list `flash` accepts) |
+| `0955:7020 … L4T (Linux for Tegra) running on Tegra` | booted into the OS — redo the sequence |
+| nothing | not detected — other cable / port / no hub; check the cable is on the port next to the buttons |
+
+Recovery runs over USB 2.0; that is normal. The board stays in recovery until power-cycled, so entering it early and flashing later is fine. For the official photos and the full button reference see NVIDIA's [Jetson AGX Orin Developer Kit User Guide](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) and the [Jetson Linux Quick Start](https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/IN/QuickStart.html) (section "To Flash the Jetson Developer Kit Operating Software" — "force recovery mode").
+
+## After the flash
+
+The Jetson reboots into the freshly flashed OS. Over the **same USB-C cable** it is reachable at a fixed address (NVIDIA's USB device-mode, nothing to configure):
+
+```bash
+ssh jetson@192.168.55.1          # user / password from jetson.yaml (default jetson / jetson)
+passwd                           # change the default password NOW — it is well known
+sudo apt update && sudo apt install -y nvidia-jetpack     # CUDA, cuDNN, TensorRT, VPI, … (what SDK Manager would push)
+```
+
+The host gets a `192.168.55.x` address on the USB network interface automatically (`./jetson flash` re-enables NetworkManager on it the moment the board boots). Ethernet / Wi-Fi are DHCP by default; a static profile can be baked in via the optional `network:` block in `jetson.yaml`.
+
+Done with the host? `./jetson teardown` undoes the kernel / mount changes in this boot (a reboot does the same).
 
 ## Prerequisites
 
-- **Host OS**: x86_64 Linux.
-- **Docker Engine** >= v20.10.6.
-- **`./data/jetson_l4t/` must be ext4 / xfs / btrfs.** `apply_binaries.sh` produces setuid binaries (`sudo`) and root-owned files inside the rootfs tree. NTFS / exFAT / `fuseblk` / FAT silently strip setuid and ownership during extraction, which yields a flashed Jetson whose `sudo` refuses to start. You do **not** have to move the repo: on such a checkout `./script/host_setup.sh` (step 0) creates a sparse ext4 image `data/jetson_l4t.img` (default `L4T_STORE_SIZE=40G`, logical — it grows with use, so keep ~20 GB actually free) and loop-mounts it over `./data/jetson_l4t/`, recording what it did in `data/.l4t_store`. Everything stays inside the repo folder; `./script/host_teardown.sh` unmounts it and `./script/clean.sh purge` deletes it. Needs `e2fsprogs` + `util-linux` on the host (`mkfs.ext4`, `losetup`). Prefer a directory on another ext4 disk instead? Set `L4T_STORE_DIR=/path/on/ext4` and the same scripts bind-mount / release / remove it. `prepare.sh` still aborts if it finds itself on a non-unix filesystem, so a missed step 0 fails fast. Note the loop path (ext4 → loop → FUSE → NTFS) is slower than a native ext4 checkout, mainly during rootfs extraction.
-- **Per-boot host setup — `./script/host_setup.sh`.** Run it on the host before connecting the Jetson. One command **provisions / re-mounts the L4T data store** (step 0, see the previous bullet — a no-op on a native ext4 checkout), registers **QEMU binfmt** (run the BSP's ARM64 tools during `prepare`), loads the **`nfsd`** module (the `flash` stage serves the payload to the Jetson's initrd over a local NFS export — no `iptables` / `usb-gadget` forwarding), disables **USB autosuspend** and raises the **`usbfs` buffer** to 2048 MB (the last two stop `tegrarcm_v2` / NFS bulk writes stalling mid-flash), and **bridges the flash export path `/srv/jetson_l4t` into the host mount namespace** (the kernel `nfsd` serves the export from the host namespace, where the container-only bind mount is otherwise absent). Everything resets on reboot, so re-run it each boot. Two things it does **not** do for you:
-  - **Persist `nfsd`** to skip it next boot: `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`.
-  - **Per-device autosuspend override**, if one port still parks the device (find it via `lsusb -t` once the Jetson is in APX): `echo on | sudo tee /sys/bus/usb/devices/<bus>-<port>/power/control`.
-
-  Symptoms when skipped: no QEMU → `chroot: ... Exec format error` during `prepare`; no `nfsd` → `RPC: Program not registered` / `Return value 114` during `flash`; no `/srv/jetson_l4t` bridge → the Jetson's initrd `mount.nfs` fails with `No such file or directory`. `prepare` needs only the QEMU step.
-
-  **Two different "Error 114" causes — don't confuse them.** (a) **At the very start of `flash`**, `Error 114` with `RPC: Program not registered` / `NFS server is not running` means the host `nfsd` module is not loaded — fix with `host_setup.sh` (or `sudo modprobe nfsd`). (b) **Partway through the transfer**, a stall that surfaces as an `Error 114` / `NFS server` failure is almost always **NetworkManager** tearing the USB link down, not `nfsd` — fix with `./script/nm_flash_guard.sh auto`. See the two matching [Troubleshooting](#troubleshooting) entries.
-- **`./script/nm_flash_guard.sh auto` on NetworkManager hosts — effectively mandatory.** Most laptops/desktops run NetworkManager, which DHCP-probes the Jetson's USB gadget interface and tears the link down mid-flash. Run `nm_flash_guard.sh auto` before `make run -- -t flash`; it marks the interface unmanaged for the flash and auto-restores NM when the board boots. Skip only if you have confirmed the host does not run NetworkManager.
-- **Jetson in APX recovery (REC)** (for the `flash` stage only; `prepare` needs no Jetson connected).
+- **x86_64 Linux** host (not WSL, not a VM on macOS for the flash step), **Docker ≥ 20.10** usable without `sudo` (`docker run --rm hello-world`; else `sudo usermod -aG docker "$USER"` and re-login), `make`, `lsusb`.
+- **~20 GB free** for the BSP, rootfs and generated images; ~4 GB of that is the one-time download.
+- **`./data/jetson_l4t/` must be ext4 / xfs / btrfs** — `apply_binaries.sh` writes setuid + root-owned files that NTFS / exFAT / FAT silently drop, producing a Jetson whose `sudo` is broken. You do not have to move the repo: on such a checkout `./jetson prepare` (via `host_setup.sh`) creates a sparse ext4 image **inside the repo** (`data/jetson_l4t.img`, `L4T_STORE_SIZE=40G` logical) and loop-mounts it over `data/jetson_l4t/`. Needs `e2fsprogs` + `util-linux` (`mkfs.ext4`, `losetup`). Prefer a directory on another ext4 disk? `L4T_STORE_DIR=/path/on/ext4 ./jetson prepare`. The loop path is slower than a native ext4 checkout, mostly during rootfs extraction.
+- **Per boot**: `./jetson prepare` re-runs `host_setup.sh` (QEMU binfmt, `nfsd`, USB autosuspend / buffer, the `/srv/jetson_l4t` bridge, the data store mount). Nothing persists across reboots; `./jetson status` tells you when it is needed again.
+- **NetworkManager hosts** (most desktops/laptops): NM tears the USB link down mid-flash unless guarded. `./jetson flash` runs `nm_flash_guard.sh auto` for you; only skip it if you know the host does not run NM.
 
 ## Configure `jetson.yaml`
 
-The top-level `jetson.yaml` is a symlink to one of the presets under `config/jetson/`. Pick one matching your board + storage target:
+`jetson.yaml` is a symlink to a preset under `config/jetson/`. The default (`agx-orin-emmc.yaml`) flashes an AGX Orin devkit — 32 GB or 64 GB, same target — to its eMMC. Pick the one matching your board + storage:
 
 | Preset | Board | Storage |
 |---|---|---|
@@ -134,105 +142,13 @@ See `config/jetson/_example.yaml` for the full schema with comments.
 
 **To add a JetPack release** the presets do not yet support: edit `config/jetson/_l4t_mapping.yaml` to add a new entry under `jetpack_to_l4t` (with the `l4t_release` and `bsp_url` / `rootfs_url` from [Jetson Linux Archive](https://developer.nvidia.com/embedded/jetson-linux-archive)), then rebuild the prepare / flash images.
 
-## Quick Start
+## Data, cleanup, removing the repo
 
-> **Before `make run`:** run `./script/host_setup.sh` once per boot (QEMU binfmt, `nfsd`, USB tweaks — see [Prerequisites](#prerequisites)), and `./script/init_data_dirs.sh` on the first run (otherwise the Docker daemon `mkdir`s the `data/` mounts as root, blocking the container's non-root user).
+Everything lives under the checkout, gitignored: `data/downloads/` (tarballs), `data/jetson_l4t/` (BSP + rootfs + images — the ext4 image `data/jetson_l4t.img` on NTFS checkouts), `data/nvsdkm/` + `data/nvidia_sdk/` (SDK Manager only), `log/`. The container sees `data/jetson_l4t/` as `/srv/jetson_l4t` and `jetson.yaml` as `/etc/jetson.yaml` (read-only).
 
-```bash
-./script/host_setup.sh      # once per boot: QEMU binfmt + nfsd + USB tweaks (run on host)
-./script/init_data_dirs.sh  # first run only
-ln -sf config/jetson/agx-orin-emmc.yaml jetson.yaml
+Each phase records progress in `.prepared.yaml`; re-running `./jetson prepare` skips what is done. Changing the JetPack / board after a prepare is detected as a mismatch and asks you to `./script/clean.sh l4t` first.
 
-# Phase 1 — host-side image build (no Jetson connected)
-make build -- -t prepare
-make run -- -t prepare
-
-# Phase 2 — write to Jetson
-# Put Jetson into APX recovery: power off, hold REC, reconnect power, release.
-make build -- -t probe   # one stage per build — last -t wins, so build them separately
-make build -- -t flash
-make run -- -t probe     # confirm Jetson visible in APX (exits 0 on success)
-./script/nm_flash_guard.sh auto   # see "NetworkManager" note below
-make run -- -t flash
-```
-
-On a host running NetworkManager (most laptops/desktops), the flash can stall partway with a misleading `NFS server` / `Error 114` failure: NM tries to DHCP the Jetson's USB gadget interface, times out, and removes the address mid-transfer. `./script/nm_flash_guard.sh auto` marks that interface unmanaged for the flash, then **re-enables NM automatically the moment the board re-enumerates as the booted device (`0955:7020`)** — so the host immediately picks up `192.168.55.x` and you can SSH in, with no manual `enable` step. A timeout (default 1800s, override with the first arg) restores NM even if the flash aborts. See [`nm_flash_guard.sh`](script/nm_flash_guard.sh) for `disable` / `enable` / `around` / `status` subcommands.
-
-After the Jetson boots into the freshly flashed OS, install the rest of JetPack from NVIDIA's OTA apt repository:
-
-```bash
-sudo apt update
-sudo apt install -y nvidia-jetpack
-```
-
-This installs CUDA, cuDNN, TensorRT, VPI, multimedia APIs, container runtime, etc. — the same component set SDK Manager would push, just pulled directly by the Jetson.
-
-### Headless first connection (USB, no network setup)
-
-The flashed L4T rootfs ships NVIDIA's USB device-mode service, so the Jetson is reachable at a fixed **`192.168.55.1`** over the same USB-C cable used to flash — no `jetson.yaml` `network:` config required:
-
-```bash
-ssh <username>@192.168.55.1     # username / password from jetson.yaml's user.* block
-```
-
-> If you flashed with the default `jetson` / `jetson` credentials, **change the password now** with `passwd` on the device — the default is well known and the board is reachable over USB (and over any configured network).
-
-The host auto-configures a `192.168.55.x` address on the USB network interface (check with `ip a`). This link is independent of the optional [`network:`](#configure-jetsonyaml) block — which configures the Jetson's Ethernet / Wi-Fi via NetworkManager — and both coexist. The `192.168.55.1` address is baked into L4T and cannot be changed from this repo.
-
-### Resume after interruption
-
-Each phase records progress in `data/jetson_l4t/.../.prepared.yaml`. Re-running `make run -- -t prepare` skips completed steps (BSP download, rootfs extraction, `apply_binaries.sh`, user creation, image generation). A JetPack / board change is detected as a mismatch and aborts with an action message pointing at `./script/clean.sh l4t`.
-
-## Verification status
-
-Be honest about what has actually been flashed versus what is only known to build and validate.
-
-**What CI proves (and only this):** image build for every stage, `shellcheck` + `hadolint` lint, the `bats` smoke suite, and `sdkmanager --ver`. **CI does NOT run a real flash** — no Jetson hardware is attached in CI, so no end-to-end flash, NFS serve, or eMMC write is exercised there. See the [HITL-ONLY paths in TEST.md](doc/test/TEST.md) for the steps only hardware-in-the-loop testing can cover.
-
-Per-preset status:
-
-| Preset | Status |
-|---|---|
-| `agx-orin-emmc.yaml` | verified on hardware 2026-06, JetPack 6.2.2 |
-| `agx-orin-nvme.yaml` | config-validated only |
-| `agx-orin-usb.yaml` | config-validated only |
-| `orin-nx-nvme.yaml` | config-validated only |
-| `orin-nano-nvme.yaml` | config-validated only |
-| `orin-nano-sd.yaml` | config-validated only |
-
-"config-validated only" means the preset parses, resolves its aliases, and builds flash images, but the full `flash` stage to that board + storage has not yet been confirmed on real hardware. The mechanism is identical across presets, so config-validated presets are expected to work; they just have not been signed off end to end.
-
-## Two flashing paths
-
-This repo ships two ways to flash a Jetson. **Factory flash is the documented default**; SDK Manager is a best-effort alternative.
-
-| | **Factory flash** (`prepare` / `flash` / `probe`) | **SDK Manager** (`cli` / `gui`) |
-|---|---|---|
-| Status | **Default**. CI proves build + lint + bats only (NO real flash); end-to-end verified on hardware for `agx-orin-emmc` (see [Verification status](#verification-status)) | Best-effort. CI only builds + smokes `sdkmanager --ver`; a real SDK Manager flash is **never** CI-verified |
-| NVIDIA login | Not needed | **Required** (session persists in `data/nvsdkm`) |
-| Mode | Scriptable / headless / offline-cacheable | Interactive component selection + host dev tools |
-| Mechanism | `l4t_initrd_flash.sh` over a `tegrarcm_v2` USB link — no device-mode forwarding | SDK Manager's NFS + `iptables` + USB device-mode forwarding |
-
-The **prepare** stage uses the BSP's own `l4t_initrd_flash.sh --no-flash` to build flash images host-side (no Jetson, no NVIDIA login); the **flash** stage writes them with `--flash-only` — the Jetson boots a minimal initrd over the `tegrarcm_v2` USB link and pulls the images from a local NFS export on that same link. That needs the host's `nfsd` module loaded (see [Prerequisites](#prerequisites)), but no `iptables` or `usb-gadget` device-mode forwarding.
-
-**SDK Manager is _not_ "broken inside Docker"** — an earlier claim this repo has since dropped. The well-known [Flashing-99% stall](https://forums.developer.nvidia.com/t/docker-sdk-manager-flash-nx-struck-at-99/365066) was the **host's NetworkManager** DHCP-probing the USB gadget link and tearing it down ([#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48)), fixed by [`nm_flash_guard.sh`](script/nm_flash_guard.sh); the *"Device mode forwarding host setup failed"* step was just missing `iptables` + `dnsutils`, now in `sdkm-base`. With the [shared host prep](#prerequisites) (`host_setup.sh`, `nm_flash_guard.sh auto`) and an NVIDIA login, SDK Manager flashes — see [SDK Manager (cli / gui)](#sdk-manager-cli--gui). Factory flash stays the default because it needs no login and is scriptable/offline.
-
-## Stages
-
-| Stage | Purpose | Jetson required |
-|---|---|---|
-| `devel` | Flash tooling (`l4t_initrd_flash.sh` dependencies). Default `make build` target. | No |
-| `devel-test` | Lint (`shellcheck` + `hadolint`) + bats smoke tests. CI-only. | No |
-| `prepare` | Phase 1 — download BSP + sample rootfs, `apply_binaries.sh`, `l4t_create_default_user.sh`, `l4t_initrd_flash --no-flash`. | No |
-| `flash` | Phase 2 — `l4t_initrd_flash --flash-only`. | **Yes**, in APX recovery |
-| `probe` | Diagnostic. Scans USB for NVIDIA vendor `0955`, annotates each device with recovery vs not, exits non-zero unless at least one Jetson is in APX. Run before flash to confirm the link without committing to a full flash. | Recommended |
-| `sdkm-base` | Shared SDK Manager layer (`sdkmanager` + `iptables` + `dnsutils`) for `cli` / `gui`. Not run directly. Keeps `devel` slim. | No |
-| `cli` | SDK Manager **headless CLI** — a best-effort alternative flash path (`sdkmanager --cli`). The factory `prepare`/`flash` stages remain the supported default. | For flashing |
-| `cli-test` | `sdkmanager --ver` sanity check. CI-only. | No |
-| `gui` | SDK Manager **GUI** — best-effort flash + JetPack catalog browser. See [SDK Manager (cli / gui)](#sdk-manager-cli--gui). | For flashing |
-| `gui-test` | `sdkmanager --ver` sanity check. CI-only. | No |
-
-## Clean Targets
+### Clean targets
 
 `script/clean.sh` operates on `./data/jetson_l4t/` via a transient `alpine:3` container, so no host-side tooling is needed.
 
@@ -246,12 +162,12 @@ The **prepare** stage uses the BSP's own `l4t_initrd_flash.sh --no-flash` to bui
 
 Run `./script/clean.sh l4t` to recover from a JetPack version mismatch reported by `prepare.sh`. `purge` validates the marker before touching anything: a marker from another checkout, a malformed one, or a store path it does not recognise aborts with a diagnostic and deletes nothing.
 
-## Removing the repo
+### Removing the repo
 
 Everything this repo produces lives under the checkout (`data/`, `log/`, the derived `.env` / `compose.yaml`) — with two boot-scoped exceptions on the host: the mounts `host_setup.sh` creates (`./data/jetson_l4t` on an NTFS checkout, and the `/srv/jetson_l4t` NFS bridge) and the kernel USB / nfsd settings. Those vanish on reboot, or right now with `host_teardown.sh`. So the contract is:
 
 ```bash
-./script/clean.sh purge      # unmount + delete the store, tarballs, marker (add --keep-downloads to keep tarballs)
+./jetson purge               # unmount + delete the store, tarballs, marker (add --keep-downloads to keep tarballs)
 cd .. && rm -rf jetson_sdk_manager
 ```
 
@@ -261,286 +177,21 @@ Do **not** `rm -rf` the checkout while `./data/jetson_l4t` is still mounted: `rm
 
 Two deliberate exceptions to "everything under the checkout": Docker images (`make build` output — `docker rmi` if you want them gone), and a store you explicitly placed elsewhere with `L4T_STORE_DIR`. For the latter, `purge` empties it through the same alpine pass and then only `rmdir`s the empty directory — it never `rm -rf`s a path read from the marker — so if anything else was put in that directory, purge stops and tells you.
 
-## SDK Manager (cli / gui)
-
-The factory `prepare` / `flash` stages are the supported default. SDK Manager is shipped as two **best-effort** stages for users who prefer NVIDIA's own tool or want to browse the JetPack `.deb` catalog: `cli` (`sdkmanager --cli`) and `gui` (the graphical client). Both build on `sdkm-base`, which adds the `iptables` + `dnsutils` that SDK Manager's in-Docker device-mode forwarding needs.
-
-```bash
-make build -- -t gui    # or: -t cli
-make run -- -t gui      # or: -t cli
-```
-
-Best-effort means: CI builds the stages and smokes `sdkmanager --ver`, but a real SDK Manager flash is manual and may drift with NVIDIA upstream. For a GUI/CLI flash to succeed, set up the same host prerequisites as the factory path first — `./script/host_setup.sh` and `./script/nm_flash_guard.sh auto` — and sign in with your NVIDIA Developer account. The `gui` entrypoint prints a banner with these steps, then (interactively) waits for Enter before launching; extra positional args after `-t gui` are forwarded to `sdkmanager-gui` (after `--no-sandbox`). GUI mode needs an X11 session on the host (auto-forwarded by the base template).
-
-GUI mode requires an X11 session on the host; the base template auto-detects `$DISPLAY` and forwards the X11 socket + `XAUTHORITY`.
-
-## Persistent Data
-
-Each path under `./data/` is bind-mounted into the container (gitignored).
-
-| Host path | Container path | Purpose |
-|---|---|---|
-| `./data/jetson_l4t/` | `/srv/jetson_l4t` | BSP + rootfs + generated flash images (factory-flash workflow). **Must be ext4 / xfs / btrfs** — on an NTFS / exFAT checkout `host_setup.sh` loop-mounts `./data/jetson_l4t.img` here (marker: `./data/.l4t_store`). |
-| `./data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | Cached tarballs (BSP + sample rootfs), shared with SDK Manager. |
-| `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager login session cache + its SSH key. `cli` / `gui` stages only. **Must be ext4 / xfs / btrfs** — a non-unix FS forces the SSH key to 0777 and ssh refuses it, stalling the on-device install. |
-| `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager-managed SDK install folder (extracted setuid rootfs). `cli` / `gui` stages only. **Must be ext4 / xfs / btrfs.** |
-| `./jetson.yaml` | `/etc/jetson.yaml` (read-only) | User config, read by `prepare.sh` / `flash.sh` / `gui-entrypoint.sh`. |
-
-## Architecture
-
-```mermaid
-graph TD
-    EXT1["test-tools image\nbats + shellcheck + hadolint"]
-    EXT2["ubuntu:${BASE_IMAGE}\n(22.04 / 24.04)"]
-    EXT3["NVIDIA Jetson Linux Archive\nBSP + sample rootfs tarballs"]
-    EXT4["CUDA apt repo\ncuda-keyring + sdkmanager"]
-
-    EXT2 --> sys["sys\nuser/group, locale, timezone"]
-    sys --> devel-base["devel-base\ndev tools (git, vim, tmux, curl, wget)"]
-    devel-base --> devel["devel\nflash tooling + yq binary"]
-
-    devel --> prepare["prepare\nCMD prepare.sh\n(host-side image build)"]
-    EXT3 --> prepare
-    devel --> flash["flash\nCMD flash.sh\n(USB write to Jetson)"]
-    devel --> probe["probe\nCMD probe.sh\n(lsusb 0955 sanity check)"]
-    devel --> sdkm-base["sdkm-base\n+ SDK Manager + iptables + dnsutils"]
-    EXT4 --> sdkm-base
-    sdkm-base --> cli["cli\nCMD sdkmanager --cli\n(best-effort flash path)"]
-    sdkm-base --> gui["gui\n+ X11 libs\nCMD gui-entrypoint.sh"]
-
-    EXT1 --> devel-test["devel-test (ephemeral)\nshellcheck + hadolint + bats"]
-    devel --> devel-test
-    gui --> gui-test["gui-test (ephemeral)\nsdkmanager --ver"]
-    cli --> cli-test["cli-test (ephemeral)\nsdkmanager --ver"]
-```
-
-## Smoke Tests
-
-See [TEST.md](doc/test/TEST.md).
-
-```bash
-make build test
-```
-
-The `devel-test` stage runs the bats suite against the `devel` image; the two `sdkmanager` assertions are skipped there (they only run when bats is re-executed inside the `cli` / `gui` images).
-
-## Directory Structure
-
-```text
-jetson_sdk_manager/
-├── jetson.yaml -> config/jetson/agx-orin-emmc.yaml   # symlink; switch presets here
-├── compose.yaml                 # Docker Compose (derived, gitignored)
-├── Dockerfile                   # sys → devel-base → devel → {prepare, flash, probe, sdkm-base → cli/gui}
-├── Makefile -> .base/script/docker/Makefile
-├── .base/                       # Shared template (git subtree)
-├── data/                        # Persistent state (gitignored)
-│   ├── jetson_l4t/              #   BSP + rootfs + flash images
-│   ├── jetson_l4t.img           #   ext4 image loop-mounted over jetson_l4t/ (NTFS checkouts only)
-│   ├── .l4t_store               #   store marker: backend / repo_id / image path
-│   ├── downloads/               #   BSP / rootfs tarballs
-│   ├── nvsdkm/                  #   SDK Manager login session (cli/gui)
-│   └── nvidia_sdk/              #   SDK Manager install folder (cli/gui)
-├── config/
-│   ├── docker/setup.conf        # Runtime config — source of truth
-│   ├── jetson/                  # Flash presets + schema
-│   │   ├── _example.yaml        #   Canonical schema with comments
-│   │   ├── _l4t_mapping.yaml    #   JetPack → L4T release / URLs (build-time)
-│   │   └── *.yaml               #   Per-board / per-storage presets
-│   └── packages/                # X11 lib lists for the gui stage (per Ubuntu codename)
-├── doc/
-│   ├── adr/                     # Architecture Decision Records
-│   ├── changelog/CHANGELOG.md
-│   ├── test/TEST.md
-│   ├── Flash_Workflow.md        # Deep-dive into the prepare/flash phases
-│   ├── README.zh-TW.md
-│   ├── README.zh-CN.md
-│   └── README.ja.md
-├── script/
-│   ├── prepare.sh               # Phase 1 entrypoint
-│   ├── flash.sh                 # Phase 2 entrypoint
-│   ├── clean.sh                 # Volume cleanup targets
-│   ├── gui-entrypoint.sh        # SDK Manager GUI launcher + best-effort banner
-│   ├── lib/                     # yaml / download / volume / store / errors helpers
-│   ├── host_setup.sh            # One-shot per-boot host prereqs (store/qemu/nfsd/USB)
-│   ├── host_teardown.sh         # Reverse host_setup.sh in the same boot
-│   ├── init_data_dirs.sh        # First-time data/ mkdir as non-root
-│   ├── entrypoint.sh            # Container entrypoint (logging tee)
-│   ├── build.sh -> ../.base/script/docker/wrapper/build.sh
-│   ├── run.sh   -> ../.base/script/docker/wrapper/run.sh
-│   ├── exec.sh  -> ../.base/script/docker/wrapper/exec.sh
-│   ├── stop.sh  -> ../.base/script/docker/wrapper/stop.sh
-│   ├── setup.sh -> ../.base/script/docker/wrapper/setup.sh
-│   ├── setup_tui.sh -> ../.base/script/docker/wrapper/setup_tui.sh
-│   └── prune.sh -> ../.base/script/docker/wrapper/prune.sh
-├── test/smoke/*.bats            # unit + integration (bats, stubs on PATH)
-├── test/system/store_loop_system.sh   # system + acceptance: real loop mount in CI
-├── .github/workflows/main.yaml
-└── .gitignore
-```
-
 ## Troubleshooting
 
-### `prepare.sh` aborts: "L4T_ROOT ... is on ntfs/exfat/fuseblk"
+`./jetson status` diagnoses the common ones. Every known failure, with its exact error text and fix, is in **[doc/TROUBLESHOOTING.md](doc/TROUBLESHOOTING.md)**:
 
-`apply_binaries.sh` creates setuid binaries (`sudo`) and root-owned files. NTFS / exFAT / `fuseblk` / FAT silently drop both, which produces a flashed Jetson whose `sudo` refuses to start. This abort means `./data/jetson_l4t/` is on such a filesystem **and is not mounted** — i.e. `./script/host_setup.sh` has not run since boot. Run it; step 0 creates (first time) or re-mounts the in-repo ext4 image:
+- `prepare.sh` aborts: *L4T_ROOT … is on ntfs/exfat/fuseblk* · *volume mismatch* · `chroot: … Exec format error`
+- *Could not detect a board* / Jetson not in recovery
+- `RPC: Program not registered` / *NFS server is not running* / `Error 114` (at the start of flash)
+- Flash stalls mid-transfer / "Flashing – 99 %" / `mount.nfs: No such file or directory` (NetworkManager)
+- `ERROR: might be timeout in USB write` / `Return value 3`
+- `Error opening /dev/sda: No medium found` (microSD via USB reader) · flash hangs on the APP partition
+- SDK Manager: *Device mode forwarding host setup failed* · GUI component install hangs
 
-```bash
-./script/host_setup.sh           # step 0: data/jetson_l4t.img → loop-mounted on data/jetson_l4t
-findmnt ./data/jetson_l4t        # should show FSTYPE ext4, SOURCE /dev/loopN
-make run -- -t prepare
-```
+## Going deeper
 
-Knobs (environment variables for `host_setup.sh`):
-
-| Variable | Default | Effect |
-|---|---|---|
-| `L4T_STORE_SIZE` | `40G` | Logical size of the sparse image (minimum 20G; never shrinks an existing image). |
-| `L4T_STORE_DIR` | unset | Use a directory on another ext4 / xfs / btrfs disk instead of an image; it is bind-mounted over `./data/jetson_l4t/` and recorded as `backend=directory-bind`. |
-| `L4T_STORE_BACKEND` | auto | Force `loop-image` / `directory-bind` / `native` regardless of the detected filesystem (CI uses this). |
-
-The mount is not persistent; re-run `host_setup.sh` after a reboot. `host_setup.sh` remembers the choice in `data/.l4t_store`, so a later run never re-formats: if the mount fails it points you at `sudo e2fsck -f data/jetson_l4t.img` rather than recreating the image.
-
-For diagnostic purposes only, `JETSON_ALLOW_NON_UNIX_FS=1` downgrades the abort to a warning:
-
-```bash
-JETSON_ALLOW_NON_UNIX_FS=1 make run -- -t prepare
-```
-
-This **cannot produce a working flash** on a non-unix filesystem. NVIDIA's `apply_binaries.sh` has its own root-ownership check (`find rootfs/etc/passwd -user root -group root`) that aborts step 7/10 once the sample rootfs has extracted under the wrong owner. The escape hatch only exists so a maintainer can run prepare far enough to observe the failure mode empirically; it is not a workaround for the underlying filesystem constraint.
-
-### `prepare.sh` aborts: volume mismatch
-
-The `.prepared.yaml` marker says the volume was prepared for a different JetPack / board than `jetson.yaml` now selects. Wipe and re-run:
-
-```bash
-./script/clean.sh l4t
-make run -- -t prepare
-```
-
-### `chroot: failed to run command 'dpkg': Exec format error`
-
-Host kernel cannot execute ARM64 binaries. Register the QEMU binfmt interpreter:
-
-```bash
-docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-```
-
-Run once per host boot.
-
-### `Could not detect a board` / Jetson not in recovery
-
-`flash.sh` checks `lsusb` for NVIDIA VID `0955` + a recovery PID (`7023` / `7223` / `7423` / `7523` / `7e19`) and aborts if none is present. Run the `probe` stage to get the same check in isolation — useful for testing different cables / ports without losing the prepare-stage state:
-
-```bash
-make run -- -t probe
-```
-
-It prints every NVIDIA-vendor device on the bus, annotates which ones are in the recovery range, and exits 0 only when at least one is.
-
-Recovery mode entry, step-by-step:
-
-1. Disconnect power.
-2. Connect USB-C between the Jetson **front panel** (button side) and the host.
-3. Hold **REC** (middle button).
-4. Connect power (or press Power).
-5. Release REC after ~2 seconds.
-
-Verify on the host:
-
-```bash
-lsusb | grep -i 'NVIDIA Corp'
-```
-
-| Output | Status |
-|---|---|
-| `0955:7023` / `7223` / `7423` / `7523` / `7e19` NVIDIA Corp. APX | Jetson in recovery (ready to flash) |
-| `0955:<other PID>` | Booted into OS — re-enter recovery |
-| (nothing) | Not detected — try a different cable / port / direct connection (no hub) |
-
-Recovery mode runs over USB 2.0 (480 Mbps); this is normal — the USB 3 controller is inactive in APX.
-
-### `clnt_create: RPC: Program not registered` / `NFS server is not running` / `Error 114`
-
-The `flash` stage's `l4t_initrd_flash.sh` serves the flash payload to the Jetson's initrd over a local NFS export, but the container shares the host kernel and the host has not loaded the `nfsd` module:
-
-```
- * Not starting NFS kernel daemon: no support in current kernel.
-clnt_create: RPC: Program not registered
-NFS server is not running
-make: *** [Makefile:41: run] Error 114
-```
-
-Load it on the host (not inside the container), then re-run the flash:
-
-```bash
-sudo modprobe nfsd
-make run -- -t flash
-```
-
-Persist across reboots with `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`. See [Prerequisites](#prerequisites). `flash.sh` now pre-checks this and aborts early with the same guidance.
-
-### Flash stalls mid-transfer / "Flashing - 99%" / `mount.nfs: No such file or directory`
-
-The in-container flash (either path) stalling partway is almost always the **host's NetworkManager** DHCP-probing the Jetson's USB gadget interface, timing out, and removing the address mid-transfer — the root cause traced in [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48). Run `./script/nm_flash_guard.sh auto` before flashing (it marks the interface unmanaged, then re-enables NM when the board boots). If instead you see `mount.nfs: ... No such file or directory`, the host `/srv/jetson_l4t` bridge is missing — `./script/host_setup.sh` sets it up (step 5/5).
-
-### SDK Manager: "Device mode forwarding host setup failed"
-
-This is **not** a fundamental Docker limitation (an earlier README claimed so — it was wrong). SDK Manager's `device_mode_host_setup.sh` needs `iptables` (NAT MASQUERADE) and `dig` (a DNS reachability probe); both now ship in the `sdkm-base` layer, so the `cli` / `gui` stages clear this step. If it still fails, confirm you ran `./script/host_setup.sh` + `./script/nm_flash_guard.sh auto` and are signed in to your NVIDIA Developer account. Context: [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48).
-
-### SDK Manager GUI: component install hangs (a step stuck at a fixed %)
-
-SDK Manager's on-device SDK-component install can hang in the GUI — a step (often "Additional Setups", or any package) sits at a fixed percentage and the "taking longer than expected" dialog keeps reappearing — even though the device-side step already finished and the board has working network (`ping 8.8.8.8` from the board succeeds). This is an SDK Manager (upstream) progress-tracking flakiness, **not a flash failure**: the OS is already flashed and the board boots.
-
-You do not need SDK Manager to finish the component install. The flashed board already has the NVIDIA L4T apt source configured, so install the full JetPack SDK directly on the board — the same packages, and exactly what the factory path does:
-
-```bash
-ssh <user>@192.168.55.1
-sudo apt update && sudo apt install -y nvidia-jetpack
-```
-
-This is one more reason the factory `prepare` / `flash` path is the documented default: it installs the SDK components on the booted board via apt, with no GUI step to hang.
-
-### `ERROR: might be timeout in USB write` / `Return value 3`
-
-Boot ROM communication stalls during USB bulk transfer:
-
-```
-Sending bct_br
-ERROR: might be timeout in USB write.
-Error: Return value 3
-```
-
-Stale USB endpoint state from a previous interrupted flash. A **hardware** power cycle back into APX recovery is required — power off, hold REC, reconnect power, release (`tegrarcm_v2 --reboot recovery` is not enough).
-
-Also confirm `./script/host_setup.sh` ran this boot — it raises the USB buffer and disables autosuspend (see [Prerequisites](#prerequisites)).
-
-### `Error: Error opening /dev/sda: No medium found` (microSD via USB reader)
-
-Multi-slot combo readers expose each slot as a separate LUN, and the default `usb` alias maps to `sda1`. If the empty slot enumerates as `sda` and the card lands on `sdb`, the flash aborts before it ever touches the card:
-
-```bash
-$ lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN
-sda    0B  Generic-  SD/MMC          usb     # empty
-sdb  117.8G Generic-  Micro SD/M2    usb     # card actually here
-```
-
-**Finding the right `device_path`** (host enumeration usually mirrors the Jetson recovery initrd's, but is not guaranteed):
-
-1. Plug the storage into the host with the rest of the USB tree the way it'll be at flash time.
-2. Run `lsblk -d -o NAME,SIZE,VENDOR,MODEL,TRAN`; the disk whose `SIZE` matches your card / SSD is the target.
-3. Set `storage.device_path: <name>1` in `jetson.yaml` (e.g. `sdb1`) — partition `1` is what `l4t_initrd_flash.sh` expects.
-
-If the first attempt still fails the same way, the Jetson initrd enumerated the bus differently; try the next letter (`sdb1` → `sdc1`, etc.). See [Configure `jetson.yaml`](#configure-jetsonyaml) for the full override semantics.
-
-Other workarounds, in rough order of preference:
-
-1. Use a single-slot microSD reader — those always enumerate as `sda`, the alias default.
-2. Move the card to whichever slot maps to `/dev/sda` (use a microSD-to-SD adapter if needed).
-
-### Flash hangs on APP partition (external storage)
-
-Sustained large transfers over USB ethernet sometimes stall during the APP partition extraction step, eventually failing after a ~12 minute timeout. Options:
-
-1. Flash to **eMMC** instead (`storage.device: emmc`), then `sudo apt install nvidia-jetpack` for the SDK components.
-2. Use an **NVMe SSD** — direct PCIe is faster than USB-ethernet extraction.
-3. Retry after a full power-cycle of the Jetson.
+- **[doc/ARCHITECTURE.md](doc/ARCHITECTURE.md)** — what each `./jetson` command runs under the hood, `host_setup.sh` step by step, the Docker stages, the two flashing paths (factory flash vs. SDK Manager `cli` / `gui`), persistent data, the build graph, directory layout.
+- **[doc/Flash_Workflow.md](doc/Flash_Workflow.md)** — the `prepare` / `flash` phases in detail.
+- **[doc/test/TEST.md](doc/test/TEST.md)** — what CI proves (build, lint, bats, a real loop-mount lane) and what only hardware can (per-preset verification status: `agx-orin-emmc` verified on hardware 2026-06; the other presets are config-validated only).
+- **[doc/adr/](doc/adr/)** — architecture decisions; **[doc/changelog/CHANGELOG.md](doc/changelog/CHANGELOG.md)**.

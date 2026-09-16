@@ -97,7 +97,7 @@ _rec_instructions() {
     1. Disconnect the power supply.
     2. USB-C cable: Jetson FRONT panel (the port next to the buttons) ↔ this host.
     3. Hold the REC button, reconnect power, release REC after ~2 s.
-  The board then enumerates as USB 0955:7023 (AGX Orin) / 7323 (Orin NX) / 7523 (Orin Nano).
+  The host then sees it as USB 0955:7023 (AGX Orin) or another PID in the APX recovery range.
 REC
 }
 

@@ -8,6 +8,9 @@
 
 > この日本語訳は英語版から翻訳したものです。内容に差異がある場合は英語版（[README.md](../README.md)）が正本です。
 
+
+> **⚠ この文書は旧手順のままです。** 新しい入口は `./jetson status` → `./jetson prepare` → REC モードへ → `./jetson flash` です([README.md](../README.md) / [繁體中文](README.zh-TW.md) に REC モードの図解あり)。以下の手動コマンドも引き続き有効で、`./jetson` はそれらを順に呼ぶだけです。
+
 ---
 
 ## Supported versions
