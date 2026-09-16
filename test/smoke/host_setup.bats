@@ -71,9 +71,19 @@ EOF
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${CHOWN_LOG}"
 EOF
+  # losetup: `-j <image>` lists the loop device backing <image>; LOSETUP_DEV
+  # controls the answer (empty = no device is backed by that image).
   cat >"${STUB_BIN}/losetup" <<'EOF'
 #!/usr/bin/env bash
+if [[ "$1" == "-j" && -n "${LOSETUP_DEV:-}" ]]; then
+  printf '%s: []: (%s)\n' "${LOSETUP_DEV}" "$2"
+fi
 exit 0
+EOF
+  # findmnt: STORE_MNT_SOURCE is what data/jetson_l4t is mounted from.
+  cat >"${STUB_BIN}/findmnt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${STORE_MNT_SOURCE:-/dev/loop0}"
 EOF
   chmod +x "${STUB_BIN}"/*
   # fstype probe: STAT_FSTYPE decides what the checkout "is on" (default ext4).
@@ -115,9 +125,11 @@ EOF
 }
 
 @test "host_setup skips the bind when /srv is already a mountpoint" {
+  # /srv is a mountpoint; data/jetson_l4t is not (native checkout).
   cat >"${STUB_BIN}/mountpoint" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+[[ "$*" == *srv/jetson_l4t* ]] && exit 0
+exit 1
 EOF
   chmod +x "${STUB_BIN}/mountpoint"
   # A real bind root shares device+inode with its source; model that with a
@@ -131,9 +143,11 @@ EOF
 }
 
 @test "host_setup accepts an existing /srv bind whose findmnt SOURCE is a loop root (#93)" {
+  # /srv is a mountpoint; data/jetson_l4t is not (native checkout).
   cat >"${STUB_BIN}/mountpoint" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+[[ "$*" == *srv/jetson_l4t* ]] && exit 0
+exit 1
 EOF
   cat >"${STUB_BIN}/findmnt" <<'EOF'
 #!/usr/bin/env bash
@@ -149,9 +163,11 @@ EOF
 }
 
 @test "host_setup aborts when /srv is a mountpoint of something that is not this store (#93)" {
+  # /srv is a mountpoint; data/jetson_l4t is not (native checkout).
   cat >"${STUB_BIN}/mountpoint" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+[[ "$*" == *srv/jetson_l4t* ]] && exit 0
+exit 1
 EOF
   cat >"${STUB_BIN}/findmnt" <<'EOF'
 #!/usr/bin/env bash
@@ -168,9 +184,11 @@ EOF
 
 @test "host_setup reuses the bind when /srv already points at this repo (#76)" {
   mkdir -p "${L4T_EXPORT_SRC}"
+  # /srv is a mountpoint; data/jetson_l4t is not (native checkout).
   cat >"${STUB_BIN}/mountpoint" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+[[ "$*" == *srv/jetson_l4t* ]] && exit 0
+exit 1
 EOF
   cat >"${STUB_BIN}/findmnt" <<EOF
 #!/usr/bin/env bash
@@ -184,9 +202,11 @@ EOF
 }
 
 @test "host_setup aborts when /srv is bind-mounted from a different repo (#76)" {
+  # /srv is a mountpoint; data/jetson_l4t is not (native checkout).
   cat >"${STUB_BIN}/mountpoint" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+[[ "$*" == *srv/jetson_l4t* ]] && exit 0
+exit 1
 EOF
   cat >"${STUB_BIN}/findmnt" <<'EOF'
 #!/usr/bin/env bash
@@ -260,13 +280,85 @@ EOF
 exit 1
 EOF
   chmod +x "${STUB_BIN}/mountpoint"
-  STAT_FSTYPE=fuseblk L4T_STORE_SIZE=256M L4T_STORE_MIN_SIZE=256M run "${HOST_SETUP}"
+  LOSETUP_DEV=/dev/loop0 STORE_MNT_SOURCE=/dev/loop0 \
+    STAT_FSTYPE=fuseblk L4T_STORE_SIZE=256M L4T_STORE_MIN_SIZE=256M run "${HOST_SETUP}"
   assert_success
   assert_output --partial 'already mounted'
   [[ ! -s "${MKFS_LOG}" ]]
   run cat "${MOUNT_LOG}"
   refute_output --partial '-o loop'
   assert_output --partial '--bind'
+}
+
+@test "host_setup refuses a data/jetson_l4t mounted from something other than its image" {
+  STAT_FSTYPE=fuseblk L4T_STORE_SIZE=256M L4T_STORE_MIN_SIZE=256M run "${HOST_SETUP}"
+  assert_success
+  : >"${MOUNT_LOG}"
+  cp "${BATS_TEST_TMPDIR}/data/.l4t_store" "${BATS_TEST_TMPDIR}/marker.before"
+  cat >"${STUB_BIN}/mountpoint" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == *data/jetson_l4t* ]] && exit 0
+exit 1
+EOF
+  chmod +x "${STUB_BIN}/mountpoint"
+  # Mounted from /dev/loop7, but no loop device is backed by OUR image.
+  LOSETUP_DEV= STORE_MNT_SOURCE=/dev/loop7 \
+    STAT_FSTYPE=fuseblk L4T_STORE_SIZE=256M L4T_STORE_MIN_SIZE=256M run "${HOST_SETUP}"
+  assert_failure
+  assert_output --partial 'not backed by'
+  [[ ! -s "${MOUNT_LOG}" ]]                                   # no /srv bridge onto foreign data
+  cmp -s "${BATS_TEST_TMPDIR}/data/.l4t_store" "${BATS_TEST_TMPDIR}/marker.before"   # marker untouched
+}
+
+@test "host_setup with L4T_STORE_DIR refuses a data/jetson_l4t mounted from another directory" {
+  local store="${BATS_TEST_TMPDIR}/elsewhere/store"
+  mkdir -p "${store}"
+  cat >"${STUB_BIN}/mountpoint" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == *data/jetson_l4t* ]] && exit 0
+exit 1
+EOF
+  chmod +x "${STUB_BIN}/mountpoint"
+  # data/jetson_l4t (a real, distinct dir) is "mounted" but is not ${store}.
+  L4T_STORE_DIR="${store}" run "${HOST_SETUP}"
+  assert_failure
+  assert_output --partial 'not backed by'
+  [[ ! -e "${BATS_TEST_TMPDIR}/data/.l4t_store" ]]
+}
+
+@test "host_setup recovers a missing marker when the image already exists (crash window)" {
+  STAT_FSTYPE=fuseblk L4T_STORE_SIZE=256M L4T_STORE_MIN_SIZE=256M run "${HOST_SETUP}"
+  assert_success
+  rm -f "${BATS_TEST_TMPDIR}/data/.l4t_store"
+  : >"${MKFS_LOG}"
+  # Checkout now reads as ext4 (the loop mount is up), which used to mean "native".
+  cat >"${STUB_BIN}/mountpoint" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == *data/jetson_l4t* ]] && exit 0
+exit 1
+EOF
+  chmod +x "${STUB_BIN}/mountpoint"
+  LOSETUP_DEV=/dev/loop0 STORE_MNT_SOURCE=/dev/loop0 \
+    STAT_FSTYPE=ext4 L4T_STORE_SIZE=256M L4T_STORE_MIN_SIZE=256M run "${HOST_SETUP}"
+  assert_success
+  assert_output --partial 'recover'
+  [[ ! -s "${MKFS_LOG}" ]]
+  run cat "${BATS_TEST_TMPDIR}/data/.l4t_store"
+  assert_line 'backend=loop-image'
+}
+
+@test "host_setup fails closed on an unmarked data/jetson_l4t that is a mountpoint of unknown origin" {
+  cat >"${STUB_BIN}/mountpoint" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == *data/jetson_l4t* ]] && exit 0
+exit 1
+EOF
+  chmod +x "${STUB_BIN}/mountpoint"
+  STORE_MNT_SOURCE=/dev/nvme0n1p5[/var/lib/jetson_l4t] run "${HOST_SETUP}"
+  assert_failure
+  assert_output --partial 'unknown origin'
+  assert_output --partial 'L4T_STORE_DIR'
+  [[ ! -s "${MOUNT_LOG}" ]]
 }
 
 @test "host_setup aborts before touching anything when mkfs.ext4 is missing" {

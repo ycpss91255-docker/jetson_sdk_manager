@@ -68,6 +68,9 @@ STORE_MARKER_VERSION=1
 # store_repo_id <repo_root>
 # 16 hex chars identifying this checkout by its canonical path. Recorded in
 # the marker so purge refuses to touch a store provisioned by another clone.
+# Moving the checkout changes the id on purpose: the marker then fails
+# validation and a human has to confirm (rm the marker, or purge from the
+# old path) rather than the scripts guessing.
 store_repo_id() {
   local canon
   canon="$(readlink -f "$1")"
@@ -229,6 +232,29 @@ store_same_inode() {
 STAT_BIN="${STAT_BIN:-stat}"
 STORE_MOUNT_BIN="${STORE_MOUNT_BIN:-mount}"
 STORE_MOUNTPOINT_BIN="${STORE_MOUNTPOINT_BIN:-mountpoint}"
+STORE_FINDMNT_BIN="${STORE_FINDMNT_BIN:-findmnt}"
+STORE_LOSETUP_BIN="${STORE_LOSETUP_BIN:-losetup}"
+
+# store_mount_is_image <mountpoint> <image>
+# True when <mountpoint> is a loop mount whose loop device is backed by
+# <image>: findmnt gives /dev/loopN, `losetup -j <image>` lists every loop
+# device backed by that file. Anything else (a foreign image, a bind, a
+# different filesystem) is not ours.
+store_mount_is_image() {
+  local mnt="$1" image="$2" src
+  src="$("${STORE_FINDMNT_BIN}" -n -o SOURCE "${mnt}" 2>/dev/null)" || return 1
+  [[ "${src}" == /dev/loop* ]] || return 1
+  "${STORE_LOSETUP_BIN}" -j "${image}" 2>/dev/null | grep -q "^${src}:"
+}
+
+_store_reject_foreign_mount() {
+  emit_error \
+    --category host-config \
+    --detail "$1 is mounted but not backed by $2" \
+    --action "Unmount it (sudo umount $1) if it is stale, then re-run host_setup.sh" \
+    --action "If it is deliberately mounted from an ext4 directory, say so with L4T_STORE_DIR=<that directory>"
+  return 1
+}
 
 # store_fstype_of <path>
 store_fstype_of() {
@@ -285,7 +311,9 @@ _store_provision_loop() {
     _store_ok "reusing ext4 image ${STORE_IMAGE}"
   fi
   if "${STORE_MOUNTPOINT_BIN}" -q "${STORE_DATA_DIR}"; then
-    _store_ok "${STORE_DATA_DIR} already mounted"
+    store_mount_is_image "${STORE_DATA_DIR}" "${STORE_IMAGE}" \
+      || _store_reject_foreign_mount "${STORE_DATA_DIR}" "${STORE_IMAGE}" || return 1
+    _store_ok "${STORE_DATA_DIR} already mounted from ${STORE_IMAGE}"
   else
     if ! sudo "${STORE_MOUNT_BIN}" -o loop "${STORE_IMAGE}" "${STORE_DATA_DIR}"; then
       emit_error \
@@ -319,7 +347,9 @@ _store_provision_dir() {
     return 1
   fi
   if "${STORE_MOUNTPOINT_BIN}" -q "${STORE_DATA_DIR}"; then
-    _store_ok "${STORE_DATA_DIR} already mounted"
+    store_same_inode "${STORE_DATA_DIR}" "${store}" \
+      || _store_reject_foreign_mount "${STORE_DATA_DIR}" "${store}" || return 1
+    _store_ok "${STORE_DATA_DIR} already mounted from ${store}"
   else
     sudo "${STORE_MOUNT_BIN}" --bind "${store}" "${STORE_DATA_DIR}"
     _store_ok "${STORE_DATA_DIR} ← bind ${store}"
@@ -329,9 +359,16 @@ _store_provision_dir() {
 }
 
 # store_setup <repo_root>
-# Make ${repo_root}/data/jetson_l4t a unix filesystem. An existing marker
-# wins over re-detection (a moved checkout still finds its image); a
-# marker that fails validation aborts rather than provisioning on top.
+# Make ${repo_root}/data/jetson_l4t a unix filesystem. Precedence:
+#   1. a valid marker (backend re-detection is skipped; a marker that fails
+#      validation — e.g. the checkout was moved, so repo_id changed — aborts
+#      and asks for a human rather than provisioning on top);
+#   2. no marker but the image exists → loop-image, marker re-created
+#      (crash window between mount and marker write);
+#   3. no marker, no image, but data/jetson_l4t is already a mountpoint →
+#      fail closed unless L4T_STORE_DIR names what it is mounted from
+#      (a mounted ext4 would otherwise read as "native" and be trusted);
+#   4. otherwise detect from the filesystem type.
 store_setup() {
   local repo_root="$1" backend fstype
   store_paths "${repo_root}"
@@ -340,6 +377,17 @@ store_setup() {
   if [[ -f "${STORE_MARKER}" ]]; then
     store_marker_validate "${STORE_MARKER}" "${repo_root}" || return 1
     backend="$(store_marker_read "${STORE_MARKER}" backend)"
+  elif [[ -f "${STORE_IMAGE}" && -z "${L4T_STORE_DIR:-}" ]]; then
+    _store_warn "no marker but ${STORE_IMAGE} exists — recovering (loop-image)"
+    backend="loop-image"
+  elif "${STORE_MOUNTPOINT_BIN}" -q "${STORE_DATA_DIR}" && [[ -z "${L4T_STORE_DIR:-}" ]] \
+      && [[ "${L4T_STORE_BACKEND:-}" != "native" ]]; then
+    emit_error \
+      --category host-config \
+      --detail "${STORE_DATA_DIR} is already a mountpoint of unknown origin ($("${STORE_FINDMNT_BIN}" -n -o SOURCE "${STORE_DATA_DIR}" 2>/dev/null || echo '?')) and there is no data/.l4t_store marker" \
+      --action "If you mounted an ext4 directory there yourself, re-run with L4T_STORE_DIR=<that directory> so the repo can track it" \
+      --action "Otherwise unmount it (sudo umount ${STORE_DATA_DIR}) and re-run host_setup.sh"
+    return 1
   else
     fstype="$(store_fstype_of "${STORE_DATA_DIR}")"
     backend="$(store_backend_detect "${fstype}")" || return 1
