@@ -138,8 +138,10 @@ _assert_export_bind_matches() {
 }
 
 # _export_l4t_tree — step 6 body. Nothing to export until prepare has built
-# exactly one tree; both other cases are reported and skipped, never fatal
-# (./jetson prepare runs this script BEFORE building the tree).
+# exactly one COMPLETE tree; every other case is reported and skipped, never
+# fatal: ./jetson prepare runs this script BEFORE building (or, after
+# clean.sh build / rootfs, re-building) the tree, so failing here would
+# block the very prepare that fixes it. ./jetson flash is the strict one.
 _export_l4t_tree() {
   local l4t rc=0
   l4t="$(nfs_export_l4t_dir)" || rc=$?
@@ -147,6 +149,10 @@ _export_l4t_tree() {
     1) _ok "L4T tree not prepared yet — nothing to export; ./jetson flash exports it once prepare has run"; return 0 ;;
     2) _warn "more than one prepared L4T tree under data/jetson_l4t — ambiguous, not exporting; ./script/clean.sh l4t and re-run ./jetson prepare"; return 0 ;;
   esac
+  if ! nfs_export_ready "${l4t}"; then
+    _ok "L4T tree at ${l4t} is incomplete (no rootfs / tools/kernel_flash/images yet) — nothing to export; ./jetson flash exports it once prepare finishes"
+    return 0
+  fi
   nfs_export_on "${l4t}"
 }
 

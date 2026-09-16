@@ -72,6 +72,23 @@ nfs_export_available() {
   command -v "${EXPORTFS_BIN}" >/dev/null 2>&1
 }
 
+# nfs_export_required_paths <l4t_dir> — the two paths that must already
+# exist to export (prepare's products; tmp is created on demand).
+nfs_export_required_paths() {
+  printf '%s\n' "$1/rootfs" "$1/tools/kernel_flash/images"
+}
+
+# nfs_export_ready <l4t_dir> — true when the tree can be exported now.
+# False after clean.sh build / rootfs (marker kept, directories gone) or
+# when the /srv bridge is not up; callers that run BEFORE prepare rebuilds
+# the tree (host_setup.sh) skip on false instead of failing.
+nfs_export_ready() {
+  local p
+  while IFS= read -r p; do
+    [[ -d "${p}" ]] || return 1
+  done < <(nfs_export_required_paths "$1")
+}
+
 # nfs_export_on <l4t_dir>
 # Export the three paths to the flash client. Idempotent: each path is
 # unexported first (errors ignored — "not exported" is the common case),
@@ -86,7 +103,7 @@ nfs_export_on() {
     _nfs_note "exportfs not on PATH (no nfs-kernel-server) — the flash container serves NFS itself"
     return 0
   fi
-  for p in "${l4t}/rootfs" "${l4t}/tools/kernel_flash/images"; do
+  while IFS= read -r p; do
     if [[ ! -d "${p}" ]]; then
       emit_error \
         --category host-config \
@@ -95,7 +112,7 @@ nfs_export_on() {
         --action "Check the /srv/jetson_l4t bridge: ./jetson status, or re-run ./script/host_setup.sh"
       return 1
     fi
-  done
+  done < <(nfs_export_required_paths "${l4t}")
   # tmp is created by NVIDIA's flash-time network_prerequisite, so a freshly
   # prepared tree does not have it yet; the tree is root-owned after
   # apply_binaries, hence sudo.
