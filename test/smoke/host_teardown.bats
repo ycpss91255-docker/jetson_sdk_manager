@@ -56,6 +56,23 @@ EOF
 
   # Keep the unmount target inside the tmpdir (no real root writes).
   export L4T_EXPORT_DIR="${BATS_TEST_TMPDIR}/srv/jetson_l4t"
+  mkdir -p "${L4T_EXPORT_DIR}"
+  # Store (#93): repo root in the tmpdir with a provisioned loop-image store.
+  export L4T_REPO_ROOT="${BATS_TEST_TMPDIR}"
+  STORE_DATA="${BATS_TEST_TMPDIR}/data/jetson_l4t"
+  STORE_IMG="${BATS_TEST_TMPDIR}/data/jetson_l4t.img"
+  STORE_MARKER="${BATS_TEST_TMPDIR}/data/.l4t_store"
+  mkdir -p "${STORE_DATA}"
+  : >"${STORE_IMG}"
+  printf 'version=1\nbackend=loop-image\nrepo_id=x\nimage=%s\n' "${STORE_IMG}" >"${STORE_MARKER}"
+  # rmdir stub so the /srv cleanup is observable without root.
+  RMDIR_LOG="${BATS_TEST_TMPDIR}/rmdir.log"; export RMDIR_LOG
+  cat >"${STUB_BIN}/rmdir" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${RMDIR_LOG}"
+/bin/rmdir "$@"
+EOF
+  chmod +x "${STUB_BIN}/rmdir"
 
   # Redirect the usbcore sysfs writes to a writable tmp dir.
   USBCORE_PARAMS="${BATS_TEST_TMPDIR}/usbcore"
@@ -133,4 +150,45 @@ EOF
   [[ ! -s "${UMOUNT_LOG}" ]]
   run cat "${NM_GUARD_LOG}"
   assert_output 'enable'   # enable is still called (it is itself a no-op)
+}
+
+# ── store (#93) ──────────────────────────────────────────────────────
+
+@test "host_teardown unmounts /srv first, then the repo store, and keeps image + marker" {
+  run "${HOST_TEARDOWN}"
+  assert_success
+  run cat "${UMOUNT_LOG}"
+  assert_line --index 0 "${L4T_EXPORT_DIR}"
+  assert_line --index 1 "${STORE_DATA}"
+  [[ -f "${STORE_IMG}" ]]
+  [[ -f "${STORE_MARKER}" ]]
+}
+
+@test "host_teardown removes the empty /srv/jetson_l4t directory after unmounting" {
+  run "${HOST_TEARDOWN}"
+  assert_success
+  [[ ! -e "${L4T_EXPORT_DIR}" ]]
+  run cat "${RMDIR_LOG}"
+  assert_output --partial "${L4T_EXPORT_DIR}"
+}
+
+@test "host_teardown leaves a non-empty /srv/jetson_l4t alone" {
+  touch "${L4T_EXPORT_DIR}/someone-elses-file"
+  run "${HOST_TEARDOWN}"
+  assert_success
+  [[ -d "${L4T_EXPORT_DIR}" ]]
+  [[ ! -s "${RMDIR_LOG}" ]]
+}
+
+@test "host_teardown skips the store unmount when data/jetson_l4t is not mounted" {
+  cat >"${STUB_BIN}/mountpoint" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == *data/jetson_l4t* ]] && exit 1
+exit 0
+EOF
+  chmod +x "${STUB_BIN}/mountpoint"
+  run "${HOST_TEARDOWN}"
+  assert_success
+  run cat "${UMOUNT_LOG}"
+  assert_output "${L4T_EXPORT_DIR}"   # only /srv
 }
