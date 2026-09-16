@@ -574,6 +574,33 @@ _wait_for() {
   assert_output '0'
 }
 
+@test "_spawn rejects a non-integer poll interval before touching anything" {
+  bash -c "'${GUARD_SH}' disable" 2>/dev/null
+  USB_SS_GUARD_POLL_INTERVAL=abc run bash -c "'${GUARD_SH}' _spawn 30 '$(_state_token)' 2>&1"
+  assert_failure 2
+  assert_output --partial 'POLL_INTERVAL'
+  [[ ! -e "${PIDFILE}" ]]
+  [[ -e "${STATE}" ]]
+  run cat "${JETSON_SS_PORT}/disable"
+  assert_output '1'
+}
+
+@test "auto with a valid CLI timeout still rejects a non-integer USB_SS_GUARD_TIMEOUT / POLL_INTERVAL (exit 2, nothing written)" {
+  USB_SS_GUARD_TIMEOUT=abc run bash -c "'${GUARD_SH}' auto 30 2>&1"
+  assert_failure 2
+  assert_output --partial 'USB_SS_GUARD_TIMEOUT'
+  [[ ! -e "${STATE}" ]]
+  run cat "${JETSON_SS_PORT}/disable"
+  assert_output '0'
+  USB_SS_GUARD_POLL_INTERVAL='1.5' run bash -c "'${GUARD_SH}' auto 30 2>&1"
+  assert_failure 2
+  assert_output --partial 'POLL_INTERVAL'
+  [[ ! -e "${STATE}" ]]
+  [[ ! -e "${PIDFILE}" ]]
+  run cat "${JETSON_SS_PORT}/disable"
+  assert_output '0'
+}
+
 @test "_watch rejects a non-integer poll interval / timeout before touching anything" {
   bash -c "'${GUARD_SH}' disable" 2>/dev/null
   USB_SS_GUARD_POLL_INTERVAL='a[$(true)]' run bash -c "'${GUARD_SH}' _watch 1 '$(_state_token)' 2>&1"
