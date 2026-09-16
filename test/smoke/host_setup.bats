@@ -442,6 +442,18 @@ _prepared_tree() {
   assert_line 'exportfs -f'
 }
 
+@test "host_setup skips the export, not fatally, when the tree is prepared but images/ is gone (clean.sh build, then ./jetson prepare)" {
+  _stub_exportfs
+  local l4t
+  l4t="$(_prepared_tree)"
+  rm -rf "${l4t}/tools/kernel_flash/images"
+  run "${HOST_SETUP}"
+  assert_success                      # ./jetson prepare runs this BEFORE rebuilding images
+  assert_output --partial 'incomplete'
+  refute_output --partial 'Error ['
+  [[ ! -e "${EXPORTFS_LOG}" ]]
+}
+
 @test "host_setup says so and skips the export when no L4T tree is prepared yet" {
   _stub_exportfs
   run "${HOST_SETUP}"
