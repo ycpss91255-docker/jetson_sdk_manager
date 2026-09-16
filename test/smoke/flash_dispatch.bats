@@ -452,3 +452,36 @@ EOF
   assert_output --partial 'INITRD_FLASH_TIMEOUT'
   [[ ! -s "${ARGV_LOG}" ]]
 }
+
+@test "flash refuses when NVIDIA's initrd script has no recognisable timeout line (never a silent no-op)" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  cat >"${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash_internal.sh" <<'EOF'
+#!/bin/bash
+wait_for_booting() {
+	maxcount=$(( timeout_s + 0 ))    # upstream changed the layout
+}
+EOF
+  yq -i '.phases |= (. + ["images"] | unique)' "${L4T_DIR}/.prepared.yaml"
+  run "${SCRIPT_DIR}/flash.sh"
+  assert_failure
+  assert_output --partial 'initrd boot wait'
+  [[ ! -s "${ARGV_LOG}" ]]
+}
+
+@test "flash refuses when the timeout patch did not land (sed succeeded but the file is unchanged)" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  _write_initrd_internal
+  yq -i '.phases |= (. + ["images"] | unique)' "${L4T_DIR}/.prepared.yaml"
+  # sed stub that exits 0 without touching the file
+  cat >"${STUB_BIN}/sed" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "${STUB_BIN}/sed"
+  run "${SCRIPT_DIR}/flash.sh"
+  assert_failure
+  assert_output --partial 'initrd boot wait'
+  [[ ! -s "${ARGV_LOG}" ]]
+}

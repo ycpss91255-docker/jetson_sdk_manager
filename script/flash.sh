@@ -30,17 +30,35 @@ _step() { printf '\n\033[36m[flash] %s\033[0m\n' "$1" >&2; }
 
 # _patch_initrd_boot_timeout <l4t_dir> <seconds>
 # Rewrite `maxcount=${timeout:-N}` in l4t_initrd_flash_internal.sh so the
-# wait for the initrd flash device is <seconds>. Idempotent: matches any
-# previous N. No-op when the script is absent (tests without a full tree).
+# wait for the initrd flash device is <seconds>. Idempotent (any previous N
+# matches). Fails loudly — never a silent no-op — when the upstream script
+# has no recognisable line or the rewrite did not land, because that is
+# exactly the 120 s timeout this patch exists to avoid. No-op only when the
+# script is absent altogether (tests without a full tree).
 _patch_initrd_boot_timeout() {
   local f="$1/tools/kernel_flash/l4t_initrd_flash_internal.sh" secs="$2"
+  local want="maxcount=\${timeout:-${secs}}"
   [[ -f "${f}" ]] || return 0
-  if grep -q "maxcount=\${timeout:-${secs}}" "${f}"; then
+  if grep -qF "${want}" "${f}"; then
     printf '  initrd boot wait already %ss\n' "${secs}" >&2
     return 0
   fi
-  sudo sed -i -E "s/maxcount=\\$\{timeout:-[0-9]+\}/maxcount=\${timeout:-${secs}}/" "${f}"
-  printf '  patched initrd boot wait: %ss (NVIDIA default 120)\n' "${secs}" >&2
+  if ! grep -qE 'maxcount=\$\{timeout:-[0-9]+\}' "${f}"; then
+    emit_error \
+      --category validate \
+      --detail "cannot set the initrd boot wait: no 'maxcount=\${timeout:-N}' line in ${f} (NVIDIA changed the script?)" \
+      --action "inspect wait_for_booting() in that file and update _patch_initrd_boot_timeout in flash.sh"
+    return 1
+  fi
+  sudo sed -i -E "s/maxcount=\\$\{timeout:-[0-9]+\}/${want//\\/\\\\}/" "${f}"
+  if ! grep -qF "${want}" "${f}"; then
+    emit_error \
+      --category validate \
+      --detail "initrd boot wait patch did not land in ${f}" \
+      --action "check the file is writable and re-run; the flash would otherwise time out after NVIDIA's 120 s"
+    return 1
+  fi
+  printf '  patched initrd boot wait: %ss\n' "${secs}" >&2
 }
 
 main() {
