@@ -241,6 +241,7 @@ RUN shellcheck -S warning /lint/wrapper/*.sh /lint/lib/*.sh && \
         /lint/gui-entrypoint.sh /lint/nm_flash_guard.sh \
         /lint/sdkm-entrypoint.sh \
         /lint/init_data_dirs.sh /lint/entrypoint.sh \
+        /lint/host_setup.sh /lint/host_teardown.sh \
         /lint/script_lib/*.sh
 WORKDIR /lint
 RUN hadolint Dockerfile
@@ -267,6 +268,12 @@ COPY --chmod=0755 script/probe.sh /opt/jetson_install/probe.sh
 COPY --chmod=0755 script/nm_flash_guard.sh /opt/jetson_install/nm_flash_guard.sh
 # SDK Manager launcher (#51) — copied so its fs-guard bats test runs.
 COPY --chmod=0755 script/sdkm-entrypoint.sh /opt/jetson_install/sdkm-entrypoint.sh
+# Host-side store lifecycle (#93): host_setup / host_teardown / clean drive
+# the L4T data store through lib/store.sh. Copied so their bats suites run
+# here instead of skipping (they stub mount / mkfs / docker on PATH).
+COPY --chmod=0755 script/host_setup.sh /opt/jetson_install/host_setup.sh
+COPY --chmod=0755 script/host_teardown.sh /opt/jetson_install/host_teardown.sh
+COPY --chmod=0755 script/clean.sh /opt/jetson_install/clean.sh
 COPY --chmod=0755 script/lib /opt/jetson_install/lib
 
 # Smoke test (shared from template + repo-specific)

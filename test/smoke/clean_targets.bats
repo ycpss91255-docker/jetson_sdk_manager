@@ -37,6 +37,36 @@ exit 0
 EOF
   chmod +x "${STUB_BIN}/docker"
   export PATH="${STUB_BIN}:${PATH}"
+
+  # purge (#93): a repo skeleton in the tmpdir with a provisioned loop-image
+  # store, a cached tarball, and host_teardown.sh stubbed to a logger.
+  export L4T_REPO_ROOT="${BATS_TEST_TMPDIR}/repo"
+  STORE_DATA="${L4T_REPO_ROOT}/data/jetson_l4t"
+  STORE_IMG="${L4T_REPO_ROOT}/data/jetson_l4t.img"
+  STORE_MARKER="${L4T_REPO_ROOT}/data/.l4t_store"
+  DOWNLOADS="${L4T_REPO_ROOT}/data/downloads"
+  mkdir -p "${STORE_DATA}" "${DOWNLOADS}"
+  touch "${STORE_DATA}/seed" "${DOWNLOADS}/Jetson_Linux_r36.5.0_aarch64.tbz2"
+  : >"${STORE_IMG}"
+  export DOWNLOADS_HOST_DIR="${DOWNLOADS}"
+  TEARDOWN_LOG="${BATS_TEST_TMPDIR}/teardown.log"; export TEARDOWN_LOG
+  HOST_TEARDOWN_BIN="${BATS_TEST_TMPDIR}/host_teardown.sh"
+  cat >"${HOST_TEARDOWN_BIN}" <<'EOF'
+#!/usr/bin/env bash
+printf 'teardown %s\n' "$*" >>"${TEARDOWN_LOG}"
+EOF
+  chmod +x "${HOST_TEARDOWN_BIN}"
+  export HOST_TEARDOWN_BIN
+}
+
+# _write_marker <backend> <repo_id> <key=value>
+_write_marker() {
+  printf 'version=1\nbackend=%s\nrepo_id=%s\n%s\n' "$1" "$2" "$3" >"${STORE_MARKER}"
+}
+
+# The repo_id store.sh derives for the tmp repo (sha256 of canonical path).
+_own_repo_id() {
+  printf '%s' "$(readlink -f "${L4T_REPO_ROOT}")" | sha256sum | cut -c1-16
 }
 
 @test "unknown target exits 2 with usage" {
@@ -95,4 +125,119 @@ EOF
   run "${CLEAN_SH}" build
   assert_success
   assert_output --partial 'nothing to do'
+}
+
+# ── purge (#93) ──────────────────────────────────────────────────────
+
+@test "clean purge wipes the tree, drops tarballs, tears down, then deletes image + marker" {
+  STUB_VOLUME_INSPECT_RC=1 export STUB_VOLUME_INSPECT_RC
+  _write_marker loop-image "$(_own_repo_id)" "image=${STORE_IMG}"
+  run "${CLEAN_SH}" purge
+  assert_success
+  assert_output --partial "${STORE_IMG}"          # announced before deletion
+  run cat "${DOCKER_LOG}"
+  assert_output --partial "${STORE_DATA}:/vol"    # the alpine content wipe ran
+  run cat "${TEARDOWN_LOG}"
+  assert_output 'teardown '
+  [[ ! -e "${STORE_IMG}" ]]
+  [[ ! -e "${STORE_MARKER}" ]]
+  [[ ! -e "${DOWNLOADS}/Jetson_Linux_r36.5.0_aarch64.tbz2" ]]
+}
+
+@test "clean purge --keep-downloads leaves the cached tarballs in place" {
+  STUB_VOLUME_INSPECT_RC=1 export STUB_VOLUME_INSPECT_RC
+  _write_marker loop-image "$(_own_repo_id)" "image=${STORE_IMG}"
+  run "${CLEAN_SH}" purge --keep-downloads
+  assert_success
+  [[ ! -e "${STORE_IMG}" ]]
+  [[ -e "${DOWNLOADS}/Jetson_Linux_r36.5.0_aarch64.tbz2" ]]
+}
+
+@test "clean purge a second time is a successful no-op" {
+  STUB_VOLUME_INSPECT_RC=1 export STUB_VOLUME_INSPECT_RC
+  _write_marker loop-image "$(_own_repo_id)" "image=${STORE_IMG}"
+  "${CLEAN_SH}" purge
+  rm -rf "${STORE_DATA:?}"/*
+  run "${CLEAN_SH}" purge
+  assert_success
+  assert_output --partial 'nothing to purge'
+}
+
+@test "clean purge refuses a marker from another checkout and deletes nothing" {
+  STUB_VOLUME_INSPECT_RC=1 export STUB_VOLUME_INSPECT_RC
+  _write_marker loop-image 0000000000000000 "image=${STORE_IMG}"
+  run "${CLEAN_SH}" purge
+  assert_failure
+  assert_output --partial 'repo_id'
+  [[ -e "${STORE_IMG}" ]]
+  [[ -e "${STORE_MARKER}" ]]
+  [[ ! -s "${TEARDOWN_LOG}" ]]
+}
+
+@test "clean purge refuses a malformed marker and deletes nothing" {
+  STUB_VOLUME_INSPECT_RC=1 export STUB_VOLUME_INSPECT_RC
+  printf 'garbage\n' >"${STORE_MARKER}"
+  run "${CLEAN_SH}" purge
+  assert_failure
+  [[ -e "${STORE_IMG}" ]]
+  [[ -e "${STORE_MARKER}" ]]
+}
+
+@test "clean purge on a directory-bind store removes the (emptied) store dir, never rm -rf" {
+  STUB_VOLUME_INSPECT_RC=1 export STUB_VOLUME_INSPECT_RC
+  local store="${BATS_TEST_TMPDIR}/ext4/store"
+  mkdir -p "${store}"
+  rm -f "${STORE_IMG}"
+  _write_marker directory-bind "$(_own_repo_id)" "store=${store}"
+  run "${CLEAN_SH}" purge
+  assert_success
+  [[ ! -e "${store}" ]]
+  [[ ! -e "${STORE_MARKER}" ]]
+  run cat "${DOCKER_LOG}"
+  refute_output --partial "${store}"      # the container never touched the host store path
+}
+
+@test "clean purge on a directory-bind store that is still non-empty after teardown fails loudly" {
+  STUB_VOLUME_INSPECT_RC=1 export STUB_VOLUME_INSPECT_RC
+  local store="${BATS_TEST_TMPDIR}/ext4/store"
+  mkdir -p "${store}"; touch "${store}/leftover"
+  rm -f "${STORE_IMG}"
+  _write_marker directory-bind "$(_own_repo_id)" "store=${store}"
+  run "${CLEAN_SH}" purge
+  assert_failure
+  assert_output --partial 'not empty'
+  [[ -e "${store}/leftover" ]]
+}
+
+@test "clean purge with no marker still runs all + teardown (native checkout)" {
+  STUB_VOLUME_INSPECT_RC=1 export STUB_VOLUME_INSPECT_RC
+  rm -f "${STORE_IMG}"
+  run "${CLEAN_SH}" purge
+  assert_success
+  assert_output --partial 'no store marker'
+  run cat "${TEARDOWN_LOG}"
+  assert_output 'teardown '
+}
+
+@test "usage lists purge and --keep-downloads" {
+  run "${CLEAN_SH}" -h
+  assert_output --partial 'purge'
+  assert_output --partial '--keep-downloads'
+}
+
+@test "clean purge refuses an unmarked data/jetson_l4t that is a mountpoint of unknown origin" {
+  STUB_VOLUME_INSPECT_RC=1 export STUB_VOLUME_INSPECT_RC
+  rm -f "${STORE_IMG}"                      # no marker, no image …
+  cat >"${STUB_BIN}/mountpoint" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == *data/jetson_l4t* ]] && exit 0   # … but something is mounted there
+exit 1
+EOF
+  chmod +x "${STUB_BIN}/mountpoint"
+  run "${CLEAN_SH}" purge
+  assert_failure
+  assert_output --partial 'unknown origin'
+  [[ ! -s "${DOCKER_LOG}" ]]                # the alpine wipe never ran
+  [[ ! -s "${TEARDOWN_LOG}" ]]              # nothing was unmounted
+  [[ -e "${STORE_DATA}/seed" ]]
 }

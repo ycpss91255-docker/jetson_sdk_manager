@@ -363,21 +363,15 @@ jetson_sdk_manager/
 
 ### `prepare.sh` 中止：「L4T_ROOT ... is on ntfs/exfat/fuseblk」
 
-`apply_binaries.sh` は setuid バイナリ（`sudo`）と root 所有のファイルを生成します。NTFS / exFAT / `fuseblk` / FAT はこの両方を黙って落とすため、生成された Jetson は起動後に `sudo` が起動を拒否します。repo を ext4 / xfs / btrfs パーティションに移すか、ext4 ディレクトリを `./data/jetson_l4t/` に bind-mount してください：
+`apply_binaries.sh` は setuid バイナリ（`sudo`）と root 所有のファイルを生成します。NTFS / exFAT / `fuseblk` / FAT はこれらを黙って落とすため、書き込んだ Jetson で `sudo` が起動しなくなります。この中止は `./data/jetson_l4t/` がそのようなファイルシステム上にあり**かつ未マウント**であることを意味します——つまり今回のブートでまだ `./script/host_setup.sh` を実行していません。実行してください。step 0 が **repo 内**に ext4 イメージ `data/jetson_l4t.img` を作成（初回）または再マウントし、`./data/jetson_l4t/` に loop-mount します。checkout の外には何も置きません：
 
 ```bash
-sudo mkdir -p /var/lib/jetson_l4t
-sudo mount --bind /var/lib/jetson_l4t ./data/jetson_l4t
+./script/host_setup.sh           # step 0：data/jetson_l4t.img → data/jetson_l4t に loop-mount
+findmnt ./data/jetson_l4t        # FSTYPE ext4、SOURCE /dev/loopN が表示されるはず
+make run -- -t prepare
 ```
 
-bind-mount のターゲットはシステムディスク上である必要はありません — ext4 / xfs / btrfs パーティション内のディレクトリならどこでもよく、2 台目の SSD やマウント済みのデータドライブも可。空き容量が十分なもの（1 回の完全な prepare で約 15 GB）を選びます：
-
-```bash
-sudo mkdir -p /media/<ext4-mount>/jetson_l4t
-sudo mount --bind /media/<ext4-mount>/jetson_l4t ./data/jetson_l4t
-```
-
-どちらの bind mount も永続しません；再起動後 `make run -- -t prepare` の前に再 mount してください。
+調整用の環境変数：`L4T_STORE_SIZE`（既定 `40G`、最小 20G）、`L4T_STORE_DIR`（別の ext4 ディスク上のディレクトリを bind-mount で使う）、`L4T_STORE_BACKEND`（バックエンド強制）。マウントは永続しないので再起動後は `host_setup.sh` を再実行。`./script/host_teardown.sh` でアンマウント、`./script/clean.sh purge`（`--keep-downloads` で tarball を残す）でイメージと marker を削除すれば、その後の `rm -rf <repo>` は残骸ゼロです。詳細は英語 README の "Prerequisites" と "Removing the repo" を参照。
 
 診断目的のみ、`JETSON_ALLOW_NON_UNIX_FS=1` で abort を警告に降格できます：
 

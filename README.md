@@ -32,6 +32,7 @@ Other JetPack versions are **not** wired up yet. Adding one is a single-file edi
 - [Two flashing paths](#two-flashing-paths)
 - [Stages](#stages)
 - [Clean Targets](#clean-targets)
+- [Removing the repo](#removing-the-repo)
 - [SDK Manager (cli / gui)](#sdk-manager-cli--gui)
 - [Persistent Data](#persistent-data)
 - [Architecture](#architecture)
@@ -45,7 +46,7 @@ Other JetPack versions are **not** wired up yet. Adding one is a single-file edi
 
 > **What a first flash expects (read this once):**
 > - **Host**: an x86_64 **Linux** machine (not a VM-on-Mac, not WSL for the flash phase).
-> - **Data dir filesystem**: `./data/jetson_l4t/` must live on **ext4 / xfs / btrfs**. Check with `df -T .` from the repo root; if `Type` is `ntfs` / `exfat` / `fuseblk` / `vfat`, see [Prerequisites](#prerequisites) for the bind-mount fix.
+> - **Data dir filesystem**: `./data/jetson_l4t/` must be **ext4 / xfs / btrfs**. On an NTFS / exFAT checkout (`df -T .` shows `fuseblk` / `ntfs` / `exfat` / `vfat`) `host_setup.sh` handles it for you: it creates an ext4 image **inside the repo** (`data/jetson_l4t.img`) and loop-mounts it — nothing lands outside the checkout. See [Prerequisites](#prerequisites).
 > - **One USB-C cable** between the host and the Jetson's front-panel port.
 > - **Time**: roughly **40 minutes** end to end (~30 min `prepare` + ~10 min `flash`), plus the one-time BSP download.
 >
@@ -81,8 +82,8 @@ make run -- -t prepare && ./script/nm_flash_guard.sh auto && make run -- -t flas
 
 - **Host OS**: x86_64 Linux.
 - **Docker Engine** >= v20.10.6.
-- **Host filesystem of the repo: ext4 / xfs / btrfs.** `apply_binaries.sh` produces setuid binaries (`sudo`) and root-owned files inside the rootfs tree. NTFS / exFAT / `fuseblk` / FAT silently strip setuid and ownership during extraction, which yields a flashed Jetson whose `sudo` refuses to start. `prepare.sh` aborts with an action message if the path is on one of these filesystems; move the repo (or bind-mount an ext4 directory over `./data/jetson_l4t/`) before re-running.
-- **Per-boot host setup — `./script/host_setup.sh`.** Run it on the host before connecting the Jetson. One command registers **QEMU binfmt** (run the BSP's ARM64 tools during `prepare`), loads the **`nfsd`** module (the `flash` stage serves the payload to the Jetson's initrd over a local NFS export — no `iptables` / `usb-gadget` forwarding), disables **USB autosuspend** and raises the **`usbfs` buffer** to 2048 MB (the last two stop `tegrarcm_v2` / NFS bulk writes stalling mid-flash), and **bridges the flash export path `/srv/jetson_l4t` into the host mount namespace** (the kernel `nfsd` serves the export from the host namespace, where the container-only bind mount is otherwise absent). Everything resets on reboot, so re-run it each boot. Two things it does **not** do for you:
+- **`./data/jetson_l4t/` must be ext4 / xfs / btrfs.** `apply_binaries.sh` produces setuid binaries (`sudo`) and root-owned files inside the rootfs tree. NTFS / exFAT / `fuseblk` / FAT silently strip setuid and ownership during extraction, which yields a flashed Jetson whose `sudo` refuses to start. You do **not** have to move the repo: on such a checkout `./script/host_setup.sh` (step 0) creates a sparse ext4 image `data/jetson_l4t.img` (default `L4T_STORE_SIZE=40G`, logical — it grows with use, so keep ~20 GB actually free) and loop-mounts it over `./data/jetson_l4t/`, recording what it did in `data/.l4t_store`. Everything stays inside the repo folder; `./script/host_teardown.sh` unmounts it and `./script/clean.sh purge` deletes it. Needs `e2fsprogs` + `util-linux` on the host (`mkfs.ext4`, `losetup`). Prefer a directory on another ext4 disk instead? Set `L4T_STORE_DIR=/path/on/ext4` and the same scripts bind-mount / release / remove it. `prepare.sh` still aborts if it finds itself on a non-unix filesystem, so a missed step 0 fails fast. Note the loop path (ext4 → loop → FUSE → NTFS) is slower than a native ext4 checkout, mainly during rootfs extraction.
+- **Per-boot host setup — `./script/host_setup.sh`.** Run it on the host before connecting the Jetson. One command **provisions / re-mounts the L4T data store** (step 0, see the previous bullet — a no-op on a native ext4 checkout), registers **QEMU binfmt** (run the BSP's ARM64 tools during `prepare`), loads the **`nfsd`** module (the `flash` stage serves the payload to the Jetson's initrd over a local NFS export — no `iptables` / `usb-gadget` forwarding), disables **USB autosuspend** and raises the **`usbfs` buffer** to 2048 MB (the last two stop `tegrarcm_v2` / NFS bulk writes stalling mid-flash), and **bridges the flash export path `/srv/jetson_l4t` into the host mount namespace** (the kernel `nfsd` serves the export from the host namespace, where the container-only bind mount is otherwise absent). Everything resets on reboot, so re-run it each boot. Two things it does **not** do for you:
   - **Persist `nfsd`** to skip it next boot: `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`.
   - **Per-device autosuspend override**, if one port still parks the device (find it via `lsusb -t` once the Jetson is in APX): `echo on | sudo tee /sys/bus/usb/devices/<bus>-<port>/power/control`.
 
@@ -241,8 +242,24 @@ The **prepare** stage uses the BSP's own `l4t_initrd_flash.sh --no-flash` to bui
 | `./script/clean.sh rootfs` | Remove `rootfs/`, keep BSP + downloaded tarballs. |
 | `./script/clean.sh l4t` | Remove the entire `Linux_for_Tegra/` tree (BSP + rootfs + images). Keep tarballs. |
 | `./script/clean.sh all` | l4t + remove `data/downloads/` tarballs. |
+| `./script/clean.sh purge` | `all` + `host_teardown.sh` + delete the L4T data store itself (the in-repo `data/jetson_l4t.img`, or the `L4T_STORE_DIR` directory) and its `data/.l4t_store` marker. The strongest clean — see [Removing the repo](#removing-the-repo). `--keep-downloads` spares the tarballs so the next prepare skips the ~3 GB download. |
 
-Run `./script/clean.sh l4t` to recover from a JetPack version mismatch reported by `prepare.sh`.
+Run `./script/clean.sh l4t` to recover from a JetPack version mismatch reported by `prepare.sh`. `purge` validates the marker before touching anything: a marker from another checkout, a malformed one, or a store path it does not recognise aborts with a diagnostic and deletes nothing.
+
+## Removing the repo
+
+Everything this repo produces lives under the checkout (`data/`, `log/`, the derived `.env` / `compose.yaml`) — with two boot-scoped exceptions on the host: the mounts `host_setup.sh` creates (`./data/jetson_l4t` on an NTFS checkout, and the `/srv/jetson_l4t` NFS bridge) and the kernel USB / nfsd settings. Those vanish on reboot, or right now with `host_teardown.sh`. So the contract is:
+
+```bash
+./script/clean.sh purge      # unmount + delete the store, tarballs, marker (add --keep-downloads to keep tarballs)
+cd .. && rm -rf jetson_sdk_manager
+```
+
+After `purge`, `rm -rf` of the checkout leaves **no residue**: no mount, no loop device, no `/srv/jetson_l4t`, nothing in `/var/lib` or your home directory. This is verified in CI by the `store-loop-system` job (real loop mount on the runner, then `rm -rf` of a throw-away clone).
+
+Do **not** `rm -rf` the checkout while `./data/jetson_l4t` is still mounted: `rm` recurses *through* the mount (deleting the store's contents, which is what you wanted) and then fails on the mountpoint itself, leaving a loop device attached to an unlinked image until you `umount`. Run `purge` (or at least `host_teardown.sh`) first. Also note `/srv/jetson_l4t` is one fixed path, so two checkouts cannot be set up on the same host at the same time.
+
+Two deliberate exceptions to "everything under the checkout": Docker images (`make build` output — `docker rmi` if you want them gone), and a store you explicitly placed elsewhere with `L4T_STORE_DIR`. For the latter, `purge` empties it through the same alpine pass and then only `rmdir`s the empty directory — it never `rm -rf`s a path read from the marker — so if anything else was put in that directory, purge stops and tells you.
 
 ## SDK Manager (cli / gui)
 
@@ -263,7 +280,7 @@ Each path under `./data/` is bind-mounted into the container (gitignored).
 
 | Host path | Container path | Purpose |
 |---|---|---|
-| `./data/jetson_l4t/` | `/srv/jetson_l4t` | BSP + rootfs + generated flash images (factory-flash workflow). **Must be ext4 / xfs / btrfs.** |
+| `./data/jetson_l4t/` | `/srv/jetson_l4t` | BSP + rootfs + generated flash images (factory-flash workflow). **Must be ext4 / xfs / btrfs** — on an NTFS / exFAT checkout `host_setup.sh` loop-mounts `./data/jetson_l4t.img` here (marker: `./data/.l4t_store`). |
 | `./data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | Cached tarballs (BSP + sample rootfs), shared with SDK Manager. |
 | `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager login session cache + its SSH key. `cli` / `gui` stages only. **Must be ext4 / xfs / btrfs** — a non-unix FS forces the SSH key to 0777 and ssh refuses it, stalling the on-device install. |
 | `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager-managed SDK install folder (extracted setuid rootfs). `cli` / `gui` stages only. **Must be ext4 / xfs / btrfs.** |
@@ -318,6 +335,8 @@ jetson_sdk_manager/
 ├── .base/                       # Shared template (git subtree)
 ├── data/                        # Persistent state (gitignored)
 │   ├── jetson_l4t/              #   BSP + rootfs + flash images
+│   ├── jetson_l4t.img           #   ext4 image loop-mounted over jetson_l4t/ (NTFS checkouts only)
+│   ├── .l4t_store               #   store marker: backend / repo_id / image path
 │   ├── downloads/               #   BSP / rootfs tarballs
 │   ├── nvsdkm/                  #   SDK Manager login session (cli/gui)
 │   └── nvidia_sdk/              #   SDK Manager install folder (cli/gui)
@@ -341,8 +360,9 @@ jetson_sdk_manager/
 │   ├── flash.sh                 # Phase 2 entrypoint
 │   ├── clean.sh                 # Volume cleanup targets
 │   ├── gui-entrypoint.sh        # SDK Manager GUI launcher + best-effort banner
-│   ├── lib/                     # yaml / download / volume / errors helpers
-│   ├── host_setup.sh            # One-shot per-boot host prereqs (qemu/nfsd/USB)
+│   ├── lib/                     # yaml / download / volume / store / errors helpers
+│   ├── host_setup.sh            # One-shot per-boot host prereqs (store/qemu/nfsd/USB)
+│   ├── host_teardown.sh         # Reverse host_setup.sh in the same boot
 │   ├── init_data_dirs.sh        # First-time data/ mkdir as non-root
 │   ├── entrypoint.sh            # Container entrypoint (logging tee)
 │   ├── build.sh -> ../.base/script/docker/wrapper/build.sh
@@ -352,7 +372,8 @@ jetson_sdk_manager/
 │   ├── setup.sh -> ../.base/script/docker/wrapper/setup.sh
 │   ├── setup_tui.sh -> ../.base/script/docker/wrapper/setup_tui.sh
 │   └── prune.sh -> ../.base/script/docker/wrapper/prune.sh
-├── test/smoke/orin_install_env.bats
+├── test/smoke/*.bats            # unit + integration (bats, stubs on PATH)
+├── test/system/store_loop_system.sh   # system + acceptance: real loop mount in CI
 ├── .github/workflows/main.yaml
 └── .gitignore
 ```
@@ -361,21 +382,23 @@ jetson_sdk_manager/
 
 ### `prepare.sh` aborts: "L4T_ROOT ... is on ntfs/exfat/fuseblk"
 
-`apply_binaries.sh` creates setuid binaries (`sudo`) and root-owned files. NTFS / exFAT / `fuseblk` / FAT silently drop both, which produces a flashed Jetson whose `sudo` refuses to start. Either move the repo to an ext4 / xfs / btrfs partition, or bind-mount an ext4 directory over `./data/jetson_l4t/`:
+`apply_binaries.sh` creates setuid binaries (`sudo`) and root-owned files. NTFS / exFAT / `fuseblk` / FAT silently drop both, which produces a flashed Jetson whose `sudo` refuses to start. This abort means `./data/jetson_l4t/` is on such a filesystem **and is not mounted** — i.e. `./script/host_setup.sh` has not run since boot. Run it; step 0 creates (first time) or re-mounts the in-repo ext4 image:
 
 ```bash
-sudo mkdir -p /var/lib/jetson_l4t
-sudo mount --bind /var/lib/jetson_l4t ./data/jetson_l4t
+./script/host_setup.sh           # step 0: data/jetson_l4t.img → loop-mounted on data/jetson_l4t
+findmnt ./data/jetson_l4t        # should show FSTYPE ext4, SOURCE /dev/loopN
+make run -- -t prepare
 ```
 
-The bind-mount target does not have to live on the system disk — any directory on an ext4 / xfs / btrfs partition works, including a path on a secondary SSD or an already-mounted data drive. Pick the one with enough free space (~15 GB for one full prepare):
+Knobs (environment variables for `host_setup.sh`):
 
-```bash
-sudo mkdir -p /media/<ext4-mount>/jetson_l4t
-sudo mount --bind /media/<ext4-mount>/jetson_l4t ./data/jetson_l4t
-```
+| Variable | Default | Effect |
+|---|---|---|
+| `L4T_STORE_SIZE` | `40G` | Logical size of the sparse image (minimum 20G; never shrinks an existing image). |
+| `L4T_STORE_DIR` | unset | Use a directory on another ext4 / xfs / btrfs disk instead of an image; it is bind-mounted over `./data/jetson_l4t/` and recorded as `backend=directory-bind`. |
+| `L4T_STORE_BACKEND` | auto | Force `loop-image` / `directory-bind` / `native` regardless of the detected filesystem (CI uses this). |
 
-Either form of the bind mount is non-persistent; re-apply it after a reboot before running `make run -- -t prepare`.
+The mount is not persistent; re-run `host_setup.sh` after a reboot. `host_setup.sh` remembers the choice in `data/.l4t_store`, so a later run never re-formats: if the mount fails it points you at `sudo e2fsck -f data/jetson_l4t.img` rather than recreating the image.
 
 For diagnostic purposes only, `JETSON_ALLOW_NON_UNIX_FS=1` downgrades the abort to a warning:
 

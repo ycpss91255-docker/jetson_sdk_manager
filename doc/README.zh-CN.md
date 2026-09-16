@@ -361,21 +361,15 @@ jetson_sdk_manager/
 
 ### `prepare.sh` 中止：「L4T_ROOT ... is on ntfs/exfat/fuseblk」
 
-`apply_binaries.sh` 会生成 setuid binary（`sudo`）和 root 拥有的文件。NTFS / exFAT / `fuseblk` / FAT 会静默丢掉这两者，生成的 Jetson 开机后 `sudo` 拒绝启动。请将 repo 移到 ext4 / xfs / btrfs 分区，或 bind-mount 一个 ext4 目录覆盖 `./data/jetson_l4t/`：
+`apply_binaries.sh` 会产生 setuid binary（`sudo`）和 root 拥有的文件；NTFS / exFAT / `fuseblk` / FAT 会静默丢掉这两者，烧录出的 Jetson 开机后 `sudo` 拒绝启动。这个中止表示 `./data/jetson_l4t/` 位于这类文件系统上**且尚未挂载**——即本次开机还没跑 `./script/host_setup.sh`。跑它；step 0 会在 **repo 内**创建（首次）或重新挂载一个 ext4 映像文件 `data/jetson_l4t.img` 并 loop-mount 到 `./data/jetson_l4t/`，不会有任何东西落在 checkout 之外：
 
 ```bash
-sudo mkdir -p /var/lib/jetson_l4t
-sudo mount --bind /var/lib/jetson_l4t ./data/jetson_l4t
+./script/host_setup.sh           # step 0：data/jetson_l4t.img → loop-mount 到 data/jetson_l4t
+findmnt ./data/jetson_l4t        # 应显示 FSTYPE ext4、SOURCE /dev/loopN
+make run -- -t prepare
 ```
 
-Bind-mount target 不必在系统盘上 — 任何 ext4 / xfs / btrfs 分区内的目录都可以，包含第二块 SSD 或已挂载的数据盘。选一个剩余空间够的（一次完整 prepare 约需 15 GB）：
-
-```bash
-sudo mkdir -p /media/<ext4-mount>/jetson_l4t
-sudo mount --bind /media/<ext4-mount>/jetson_l4t ./data/jetson_l4t
-```
-
-两种 bind mount 都不会 persistent；重开机后跑 `make run -- -t prepare` 前要再 mount 一次。
+可调参数：`L4T_STORE_SIZE`（默认 `40G`，最小 20G）、`L4T_STORE_DIR`（改用另一块 ext4 盘上的目录，bind-mount）、`L4T_STORE_BACKEND`（强制后端）。挂载不持久，重启后再跑一次 `host_setup.sh`；`./script/host_teardown.sh` 卸载、`./script/clean.sh purge`（`--keep-downloads` 保留 tarball）删除映像与 marker，之后 `rm -rf <repo>` 零残留。完整说明见英文 README 的 "Prerequisites" 与 "Removing the repo"。
 
 仅供诊断用途，`JETSON_ALLOW_NON_UNIX_FS=1` 把 abort 降为警告：
 

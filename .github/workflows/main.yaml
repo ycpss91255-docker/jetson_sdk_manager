@@ -39,6 +39,22 @@ jobs:
           fi
           exit "${status}"
 
+  # System + acceptance lane for the L4T data-store lifecycle (#93). The bats
+  # suites in the image stub mount / mkfs / docker; this job does the real
+  # thing with sudo on the runner: loop-mount an in-repo ext4 image, check
+  # setuid + ownership survive, tear down, purge, and prove `rm -rf <clone>`
+  # leaves no mount / loop device behind. Skips itself (exit 0 with a reason)
+  # if the runner has no passwordless sudo or loop support.
+  store-loop-system:
+    needs: base-ref-drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: L4T data-store loop lifecycle (setup → teardown → purge)
+        env:
+          STORE_SYSTEM_STRICT: "1"   # a missing capability fails the job instead of skipping
+        run: bash test/system/store_loop_system.sh
+
   call-docker-build:
     needs: base-ref-drift
     uses: ycpss91255-docker/base/.github/workflows/build-worker.yaml@v0.39.0

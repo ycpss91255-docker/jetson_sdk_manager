@@ -16,27 +16,40 @@
 #   l4t     — Wipe everything in the volume / bind mount. Keeps cached
 #             tarballs under data/downloads/.
 #   all     — l4t + remove all tarballs from data/downloads/.
+#   purge   — all + host_teardown + delete the L4T data store itself (the
+#             in-repo ext4 image or the L4T_STORE_DIR bind, #93) and its
+#             marker. The strongest clean: afterwards `rm -rf <repo>` leaves
+#             nothing behind. `--keep-downloads` spares the tarballs.
 
 set -euo pipefail
 
 _HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/errors.sh
 . "${_HERE}/lib/errors.sh"
+# shellcheck source=lib/store.sh
+. "${_HERE}/lib/store.sh"
 
 VOLUME_NAME="${VOLUME_NAME:-jetson_l4t}"
-BINDMOUNT_PATH_DEFAULT="$(cd "${_HERE}/.." && pwd)/data/jetson_l4t"
+# Overridable so the bats suite can point data/ at a tmpdir.
+L4T_REPO_ROOT="${L4T_REPO_ROOT:-$(cd "${_HERE}/.." && pwd)}"
+BINDMOUNT_PATH_DEFAULT="${L4T_REPO_ROOT}/data/jetson_l4t"
 BINDMOUNT_PATH="${BINDMOUNT_PATH:-${BINDMOUNT_PATH_DEFAULT}}"
 DOWNLOADS_HOST_DIR="${DOWNLOADS_HOST_DIR:-./data/downloads}"
+HOST_TEARDOWN_BIN="${HOST_TEARDOWN_BIN:-${_HERE}/host_teardown.sh}"
 
 _usage() {
   cat >&2 <<'EOF'
-Usage: ./script/clean.sh <target>
+Usage: ./script/clean.sh <target> [--keep-downloads]
 
 Targets:
   build   Remove generated flash images only (tools/kernel_flash/images/).
   rootfs  Remove rootfs/ subtree (keeps BSP).
   l4t     Wipe the L4T volume / bind mount.
   all     l4t + drop cached tarballs from data/downloads/.
+  purge   all + host_teardown + delete the L4T data store (in-repo ext4
+          image or L4T_STORE_DIR bind) and its marker. Zero residue: after
+          this, `rm -rf <repo>` removes everything. Pass --keep-downloads
+          to spare the tarballs (skips the re-download next time).
 
 Operates on the jetson_l4t Docker volume when present, falling back to
 the ./data/jetson_l4t/ bind-mount path. Either way the actual rm runs
@@ -181,14 +194,107 @@ _clean_all() {
   fi
 }
 
+# _purge_store — delete the store recorded in data/.l4t_store (#93). Runs
+# AFTER _clean_l4t emptied the mounted tree and host_teardown unmounted it,
+# so for a directory-bind store only an `rmdir` is left — never `rm -rf` a
+# path read from a file. The marker must pass store_marker_validate first.
+_purge_store() {
+  local marker backend target
+  store_paths "${L4T_REPO_ROOT}"
+  marker="${STORE_MARKER}"
+  if [[ ! -f "${marker}" ]]; then
+    printf '[clean] no store marker at %s — native checkout, nothing to purge\n' "${marker}" >&2
+    return 0
+  fi
+  store_marker_validate "${marker}" "${L4T_REPO_ROOT}" || {
+    emit_error \
+      --category permission \
+      --detail "refusing to purge: ${marker} did not validate (see above)" \
+      --action "If this checkout was moved or the marker is stale, inspect it and remove it by hand" \
+      --action "Never delete the store path from a marker you do not trust"
+    exit 1
+  }
+  backend="$(store_marker_read "${marker}" backend)"
+  case "${backend}" in
+    loop-image)
+      target="$(store_marker_read "${marker}" image)"
+      printf '[clean] Deleting ext4 image %s\n' "${target}" >&2
+      rm -f "${target}"
+      ;;
+    directory-bind)
+      target="$(store_marker_read "${marker}" store)"
+      if [[ -n "$(ls -A "${target}" 2>/dev/null)" ]]; then
+        emit_error \
+          --category permission \
+          --detail "directory-bind store ${target} is not empty after clean + teardown" \
+          --action "Check it is unmounted (findmnt ${target}) and empty it yourself, then re-run purge"
+        exit 1
+      fi
+      printf '[clean] Removing empty store directory %s\n' "${target}" >&2
+      rmdir "${target}"
+      ;;
+  esac
+  rm -f "${marker}"
+  printf '[clean] removed marker %s\n' "${marker}" >&2
+}
+
+_clean_purge() {
+  local keep_downloads="$1"
+  store_paths "${L4T_REPO_ROOT}"
+  # Same fail-closed rule as host_setup.sh: a mount we did not record is not
+  # ours to empty or unmount (#93 review). Checked before ANY destructive step.
+  if [[ ! -f "${STORE_MARKER}" ]] && "${MOUNTPOINT_BIN:-mountpoint}" -q "${BINDMOUNT_PATH}"; then
+    emit_error \
+      --category host-config \
+      --detail "${BINDMOUNT_PATH} is a mountpoint of unknown origin and there is no data/.l4t_store marker — refusing to purge through it" \
+      --action "If you mounted an ext4 directory there yourself: sudo umount ${BINDMOUNT_PATH}, then purge" \
+      --action "If host_setup.sh set it up, its marker is missing — re-run ./script/host_setup.sh first (it recovers the marker)"
+    exit 1
+  fi
+  if [[ ! -f "${STORE_MARKER}" ]] \
+      && ! docker volume inspect "${VOLUME_NAME}" >/dev/null 2>&1 \
+      && [[ -z "$(ls -A "${BINDMOUNT_PATH}" 2>/dev/null)" ]]; then
+    printf '[clean] nothing to purge — no store marker, volume or L4T content\n' >&2
+    # Still make sure the host is back to normal (idempotent).
+    "${HOST_TEARDOWN_BIN}"
+    return 0
+  fi
+  printf '[clean] purge will remove: L4T tree, host mounts' >&2
+  [[ -n "${keep_downloads}" ]] || printf ', cached tarballs in %s' "${DOWNLOADS_HOST_DIR}" >&2
+  [[ -f "${STORE_MARKER}" ]] && printf ', store %s' \
+    "$(store_marker_read "${STORE_MARKER}" image 2>/dev/null || store_marker_read "${STORE_MARKER}" store 2>/dev/null || true)" >&2
+  printf '\n' >&2
+  # Validate BEFORE any destructive step so a foreign marker aborts with the
+  # tree, tarballs and mounts untouched.
+  if [[ -f "${STORE_MARKER}" ]]; then
+    store_marker_validate "${STORE_MARKER}" "${L4T_REPO_ROOT}" || exit 1
+  fi
+  if [[ -n "${keep_downloads}" ]]; then
+    _clean_l4t
+  else
+    _clean_all
+  fi
+  "${HOST_TEARDOWN_BIN}"
+  _purge_store
+}
+
 main() {
-  case "${1:-}" in
+  local target="${1:-}" keep_downloads=""
+  shift || true
+  for arg in "$@"; do
+    case "${arg}" in
+      --keep-downloads) keep_downloads=yes ;;
+      *) printf 'clean.sh: unknown option: %s\n\n' "${arg}" >&2; _usage; exit 2 ;;
+    esac
+  done
+  case "${target}" in
     build) _clean_build ;;
     rootfs) _clean_rootfs ;;
     l4t) _clean_l4t ;;
     all) _clean_all ;;
+    purge) _clean_purge "${keep_downloads}" ;;
     -h|--help|"") _usage; exit 0 ;;
-    *) printf 'clean.sh: unknown target: %s\n\n' "$1" >&2; _usage; exit 2 ;;
+    *) printf 'clean.sh: unknown target: %s\n\n' "${target}" >&2; _usage; exit 2 ;;
   esac
 }
 
