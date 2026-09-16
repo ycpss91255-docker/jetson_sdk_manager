@@ -32,23 +32,25 @@ _eq()   { [ "$1" = "$2" ]; }
 _no_loop_ref() { ! sudo losetup -a | grep -q "$1"; }   # no loop device backed by a path under $1
 _section() { printf '\n\033[36m[system] %s\033[0m\n' "$1"; }
 
-# ── capability probe: never let a runner without loop support pass silently
+# ── capability probe. On a developer box a missing capability is a SKIP (exit
+# 0, with the reason). In CI set STORE_SYSTEM_STRICT=1 so the same condition
+# FAILS the job — a silently skipped lane must never read as a green one.
+_missing() {
+  if [ -n "${STORE_SYSTEM_STRICT:-}" ]; then
+    printf 'FAIL (STORE_SYSTEM_STRICT): %s\n' "$1"; exit 1
+  fi
+  printf 'SKIP: %s\n' "$1"; exit 0
+}
 _section "capability probe"
-if ! sudo -n true 2>/dev/null; then
-  printf 'SKIP: passwordless sudo is required for a real loop mount\n'; exit 0
-fi
-if ! sudo losetup -f >/dev/null 2>&1; then
-  printf 'SKIP: no free loop device on this host\n'; exit 0
-fi
+sudo -n true 2>/dev/null        || _missing "passwordless sudo is required for a real loop mount"
+sudo losetup -f >/dev/null 2>&1 || _missing "no free loop device on this host"
 for t in truncate mkfs.ext4 mount umount mountpoint findmnt losetup; do
-  command -v "${t}" >/dev/null || { printf 'SKIP: %s missing\n' "${t}"; exit 0; }
+  command -v "${t}" >/dev/null  || _missing "${t} missing"
 done
 # clean.sh purge empties the store through a transient alpine container; that
 # is part of the contract under test, so Docker is a hard requirement here —
-# no silent fallback that would make the acceptance claim hollow.
-if ! docker info >/dev/null 2>&1; then
-  printf 'SKIP: docker daemon not reachable (clean.sh needs it)\n'; exit 0
-fi
+# no fallback that would make the acceptance claim hollow.
+docker info >/dev/null 2>&1     || _missing "docker daemon not reachable (clean.sh needs it)"
 docker image inspect alpine:3 >/dev/null 2>&1 || docker pull -q alpine:3 >/dev/null
 _ok "sudo + loop + e2fsprogs + docker available"
 

@@ -338,6 +338,9 @@ _store_provision_dir() {
   local repo_root="$1" store="$2" fstype
   _store_require_tools "${STORE_MOUNT_BIN}" "${STORE_MOUNTPOINT_BIN}" || return 1
   mkdir -p "${store}"
+  # Record the canonical absolute path: the marker validator insists on it,
+  # and a relative L4T_STORE_DIR would otherwise pass setup and fail purge.
+  store="$(readlink -f "${store}")"
   fstype="$(store_fstype_of "${store}")"
   if ! store_fstype_is_unix "${fstype}"; then
     emit_error \

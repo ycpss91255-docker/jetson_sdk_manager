@@ -241,6 +241,16 @@ _purge_store() {
 _clean_purge() {
   local keep_downloads="$1"
   store_paths "${L4T_REPO_ROOT}"
+  # Same fail-closed rule as host_setup.sh: a mount we did not record is not
+  # ours to empty or unmount (#93 review). Checked before ANY destructive step.
+  if [[ ! -f "${STORE_MARKER}" ]] && "${MOUNTPOINT_BIN:-mountpoint}" -q "${BINDMOUNT_PATH}"; then
+    emit_error \
+      --category host-config \
+      --detail "${BINDMOUNT_PATH} is a mountpoint of unknown origin and there is no data/.l4t_store marker — refusing to purge through it" \
+      --action "If you mounted an ext4 directory there yourself: sudo umount ${BINDMOUNT_PATH}, then purge" \
+      --action "If host_setup.sh set it up, its marker is missing — re-run ./script/host_setup.sh first (it recovers the marker)"
+    exit 1
+  fi
   if [[ ! -f "${STORE_MARKER}" ]] \
       && ! docker volume inspect "${VOLUME_NAME}" >/dev/null 2>&1 \
       && [[ -z "$(ls -A "${BINDMOUNT_PATH}" 2>/dev/null)" ]]; then

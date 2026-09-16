@@ -224,3 +224,20 @@ _own_repo_id() {
   assert_output --partial 'purge'
   assert_output --partial '--keep-downloads'
 }
+
+@test "clean purge refuses an unmarked data/jetson_l4t that is a mountpoint of unknown origin" {
+  STUB_VOLUME_INSPECT_RC=1 export STUB_VOLUME_INSPECT_RC
+  rm -f "${STORE_IMG}"                      # no marker, no image …
+  cat >"${STUB_BIN}/mountpoint" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == *data/jetson_l4t* ]] && exit 0   # … but something is mounted there
+exit 1
+EOF
+  chmod +x "${STUB_BIN}/mountpoint"
+  run "${CLEAN_SH}" purge
+  assert_failure
+  assert_output --partial 'unknown origin'
+  [[ ! -s "${DOCKER_LOG}" ]]                # the alpine wipe never ran
+  [[ ! -s "${TEARDOWN_LOG}" ]]              # nothing was unmounted
+  [[ -e "${STORE_DATA}/seed" ]]
+}

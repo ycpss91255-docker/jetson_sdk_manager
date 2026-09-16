@@ -391,3 +391,14 @@ EOF
   assert_output --partial 'fuseblk'
   [[ ! -s "${MOUNT_LOG}" ]]
 }
+
+@test "host_setup canonicalises a relative L4T_STORE_DIR before recording it" {
+  mkdir -p "${BATS_TEST_TMPDIR}/cwd"
+  cd "${BATS_TEST_TMPDIR}/cwd"
+  L4T_STORE_DIR=rel/store run "${HOST_SETUP}"
+  assert_success
+  run cat "${BATS_TEST_TMPDIR}/data/.l4t_store"
+  assert_line "store=${BATS_TEST_TMPDIR}/cwd/rel/store"
+  run cat "${MOUNT_LOG}"
+  assert_line --index 0 --partial "--bind ${BATS_TEST_TMPDIR}/cwd/rel/store "
+}

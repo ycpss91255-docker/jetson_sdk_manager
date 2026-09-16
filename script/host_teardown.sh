@@ -33,6 +33,7 @@ _REPO="$(cd "${_HERE}/.." && pwd)"
 # Overridable so the bats suite can point data/ at a tmpdir.
 L4T_REPO_ROOT="${L4T_REPO_ROOT:-${_REPO}}"
 L4T_STORE_DATA_DIR="${L4T_REPO_ROOT}/data/jetson_l4t"
+L4T_STORE_MARKER="${L4T_REPO_ROOT}/data/.l4t_store"
 
 # Overridable for tests; defaults are the real kernel sysfs paths / tools.
 USBCORE_PARAMS="${USBCORE_PARAMS:-/sys/module/usbcore/parameters}"
@@ -75,11 +76,16 @@ main() {
   _step "2/5 Unmounting the L4T data store ${L4T_STORE_DATA_DIR}"
   # Order matters: /srv is a bind OF this mount, so it had to go first.
   # umount detaches the loop device by itself (mount -o loop sets autoclear).
-  if "${MOUNTPOINT_BIN}" -q "${L4T_STORE_DATA_DIR}"; then
+  if ! "${MOUNTPOINT_BIN}" -q "${L4T_STORE_DATA_DIR}"; then
+    _ok "${L4T_STORE_DATA_DIR} not a mountpoint — native checkout or already down"
+  elif [[ ! -f "${L4T_STORE_MARKER}" ]]; then
+    # A mount host_setup.sh did not record is not ours to take down (#93
+    # review). Leave it and say so; the user unmounts it or re-runs setup
+    # (which recovers the marker when the image is there).
+    _ok "${L4T_STORE_DATA_DIR} is mounted but there is no data/.l4t_store marker — not ours, leaving it mounted"
+  else
     sudo "${UMOUNT_BIN}" "${L4T_STORE_DATA_DIR}"
     _ok "${L4T_STORE_DATA_DIR} unmounted (image + marker kept; clean.sh purge removes them)"
-  else
-    _ok "${L4T_STORE_DATA_DIR} not a mountpoint — native checkout or already down"
   fi
 
   _step "3/5 Restoring usbfs buffer to the kernel default (${USBFS_MEMORY_MB_DEFAULT} MB)"

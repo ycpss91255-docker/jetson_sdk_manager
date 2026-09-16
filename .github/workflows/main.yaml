@@ -51,6 +51,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: L4T data-store loop lifecycle (setup → teardown → purge)
+        env:
+          STORE_SYSTEM_STRICT: "1"   # a missing capability fails the job instead of skipping
         run: bash test/system/store_loop_system.sh
 
   call-docker-build:

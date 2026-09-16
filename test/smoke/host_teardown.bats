@@ -192,3 +192,12 @@ EOF
   run cat "${UMOUNT_LOG}"
   assert_output "${L4T_EXPORT_DIR}"   # only /srv
 }
+
+@test "host_teardown leaves an unmarked data/jetson_l4t mount alone (not ours to unmount)" {
+  rm -f "${STORE_MARKER}"
+  run "${HOST_TEARDOWN}"
+  assert_success
+  assert_output --partial 'no data/.l4t_store marker'
+  run cat "${UMOUNT_LOG}"
+  assert_output "${L4T_EXPORT_DIR}"   # only /srv
+}
