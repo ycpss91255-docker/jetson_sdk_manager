@@ -66,6 +66,22 @@ EOF
   mkdir -p "${L4T_TREE}"
   printf 'jetpack_version: "6.2.2"\nphases: [bsp, rootfs, binaries, user, network, images]\n' >"${L4T_TREE}/.prepared.yaml"
 
+  # Healthy host fixtures for status (overridden per test where relevant).
+  USBCORE_PARAMS="${BATS_TEST_TMPDIR}/usbcore"; mkdir -p "${USBCORE_PARAMS}"; export USBCORE_PARAMS
+  printf -- '-1\n' >"${USBCORE_PARAMS}/autosuspend"; printf '2048\n' >"${USBCORE_PARAMS}/usbfs_memory_mb"
+  NFSD_SYSFS="${BATS_TEST_TMPDIR}/nfsd"; mkdir -p "${NFSD_SYSFS}"; export NFSD_SYSFS
+  STAT_BIN="${BATS_TEST_TMPDIR}/stat-ext4"; printf '#!/usr/bin/env bash\necho ext4\n' >"${STAT_BIN}"; chmod +x "${STAT_BIN}"; export STAT_BIN
+  cat >"${STUB_BIN}/docker" <<'EOF'
+#!/usr/bin/env bash
+# `docker info` ok; `docker image inspect` ok for any image.
+exit 0
+EOF
+  cat >"${STUB_BIN}/systemctl" <<'EOF'
+#!/usr/bin/env bash
+echo active
+EOF
+  chmod +x "${STUB_BIN}/docker" "${STUB_BIN}/systemctl"
+
   REC='Bus 003 Device 049: ID 0955:7023 NVIDIA Corp. APX'
   BOOTED='Bus 002 Device 009: ID 0955:7020 NVIDIA Corp. L4T (Linux for Tegra) running on Tegra'
 }
@@ -203,4 +219,29 @@ EOF
   assert_success
   run cat "${CALLS}"
   assert_output 'clean.sh purge --keep-downloads'
+}
+
+# ── status ───────────────────────────────────────────────────────────
+
+@test "status renders ✔/⚠/✘ lines and exits 0 when only warnings remain" {
+  printf 'hardware:\n  board: agx-orin\nstorage:\n  device: emmc\nuser:\n  password: jetson\n' >"${L4T_REPO_ROOT}/jetson.yaml"
+  LSUSB_OUT="${BOOTED}" run "${JETSON}" status
+  assert_success
+  assert_output --partial '✔'
+  assert_output --partial '⚠'
+  assert_output --partial 'not in recovery'
+}
+
+@test "status exits 1 on a blocker (jetson.yaml missing)" {
+  LSUSB_OUT="${REC}" run "${JETSON}" status
+  assert_failure 1
+  assert_output --partial '✘'
+  assert_output --partial 'jetson.yaml'
+}
+
+@test "status --strict also fails on warnings" {
+  printf 'hardware:\n  board: agx-orin\nstorage:\n  device: emmc\nuser:\n  password: s3cret\n' >"${L4T_REPO_ROOT}/jetson.yaml"
+  LSUSB_OUT="${BOOTED}" run "${JETSON}" status --strict
+  assert_failure
+  assert_output --partial 'strict'
 }

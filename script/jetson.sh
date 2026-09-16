@@ -26,8 +26,14 @@ _REPO="$(cd "${_HERE}/.." && pwd)"
 # Overridable so the bats suite can point data/ at a tmpdir.
 L4T_REPO_ROOT="${L4T_REPO_ROOT:-${_REPO}}"
 
+# shellcheck source=lib/errors.sh
+. "${_HERE}/lib/errors.sh"
 # shellcheck source=lib/usb.sh
 . "${_HERE}/lib/usb.sh"
+# shellcheck source=lib/store.sh
+. "${_HERE}/lib/store.sh"
+# shellcheck source=lib/status.sh
+. "${_HERE}/lib/status.sh"
 
 # Sibling scripts — overridable for tests.
 HOST_SETUP_BIN="${HOST_SETUP_BIN:-${_HERE}/host_setup.sh}"
@@ -199,10 +205,74 @@ cmd_purge() {
   "${CLEAN_BIN}" purge "${keep[@]}"
 }
 
+# ── status ───────────────────────────────────────────────────────────
+
+# Checks that live here rather than in lib/status.sh because they are
+# about this host's tooling / images rather than the flash state.
+_status_tools() {
+  local t
+  for t in docker make lsusb; do
+    command -v "${t}" >/dev/null 2>&1 || { printf 'bad\t%s not installed\n' "${t}"; }
+  done
+  if command -v docker >/dev/null 2>&1; then
+    if docker info >/dev/null 2>&1; then printf 'ok\tdocker reachable without sudo\n'
+    else printf 'bad\tdocker daemon not reachable as this user — add yourself to the docker group\n'; fi
+  fi
+}
+_status_images() {
+  local img missing=""
+  for img in prepare probe flash; do
+    docker image inspect "${DOCKER_HUB_USER:-${USER:-$(id -un)}}/jetson_sdk_manager:${img}" >/dev/null 2>&1 || missing="${missing} ${img}"
+  done
+  if [[ -z "${missing}" ]]; then printf 'ok\tdocker images built: prepare, probe, flash\n'
+  else printf 'warn\tdocker images not built yet:%s (make run builds them on first use)\n' "${missing}"; fi
+}
+_status_nm() {
+  if command -v systemctl >/dev/null 2>&1 && [[ "$(systemctl is-active NetworkManager 2>/dev/null)" == active ]]; then
+    printf 'ok\tNetworkManager active — ./jetson flash guards it automatically (nm_flash_guard.sh auto)\n'
+  else
+    printf 'ok\tNetworkManager not active — no USB-link guard needed\n'
+  fi
+}
+_status_srv() {
+  local srv="${L4T_EXPORT_DIR:-/srv/jetson_l4t}" data="${L4T_REPO_ROOT}/data/jetson_l4t"
+  if store_same_inode "${srv}" "${data}" 2>/dev/null; then printf 'ok\t%s bridged to data/jetson_l4t\n' "${srv}"
+  else printf 'warn\t%s not bridged — only needed for flash; ./jetson prepare (host_setup.sh) does it\n' "${srv}"; fi
+}
+
+cmd_status() {
+  local strict="" bad=0 warn=0 level msg
+  [[ "${1:-}" == "--strict" ]] && strict=1
+  _say "status — $(date '+%Y-%m-%d %H:%M')"
+  while IFS=$'\t' read -r level msg; do
+    case "${level}" in
+      ok)   _ok "${msg}" ;;
+      warn) _warn "${msg}"; warn=$((warn+1)) ;;
+      bad)  _bad "${msg}"; bad=$((bad+1)) ;;
+    esac
+  done < <(
+    # Each check is isolated: one that blows up reports itself as ✘ instead
+    # of silently truncating the report (set -e inside the substitution).
+    local chk
+    for chk in _status_tools status_config status_store _status_srv status_kernel \
+               _status_nm _status_images status_prepare status_jetson; do
+      "${chk}" 2>/dev/null || printf 'bad\tinternal: %s failed — please report this\n' "${chk}"
+    done
+  )
+  printf '\n' >&2
+  if (( bad > 0 )); then
+    printf '[jetson] %d blocker(s) — fix the ✘ lines first.\n' "${bad}" >&2; exit 1
+  elif (( warn > 0 )) && [[ -n "${strict}" ]]; then
+    printf '[jetson] --strict: %d warning(s) treated as failure.\n' "${warn}" >&2; exit 1
+  fi
+  printf '[jetson] ready. Typical order: ./jetson prepare → REC → ./jetson flash\n' >&2
+}
+
 main() {
   local cmd="${1:-}"
   [[ $# -gt 0 ]] && shift
   case "${cmd}" in
+    status)   cmd_status "$@" ;;
     prepare)  cmd_prepare "$@" ;;
     wait-rec) cmd_wait_rec "$@" ;;
     flash)    cmd_flash "$@" ;;
