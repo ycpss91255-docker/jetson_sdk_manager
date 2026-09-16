@@ -53,15 +53,16 @@ _usage() {
 Usage: ./jetson <command>
 
   status                 What is ready, what is not, and whether the Jetson is in recovery.
-  prepare                Host setup + download BSP + build flash images (~30 min, no Jetson needed).
+  prepare [--no-board]   Host setup + download BSP + build flash images (~30 min). Board must be in REC:
+                         the last step reads its board spec over USB (--no-board if you export BOARDID/FAB/…).
   wait-rec [seconds]     Show how to enter recovery (REC) and wait until the board appears.
   flash                  Write the images to a Jetson that is in recovery (~10 min).
-  all                    prepare → wait-rec → flash, stopping at the first problem.
+  all [seconds]          wait-rec (timeout: seconds, default 0 = forever) → prepare → flash, stopping at the first problem.
   teardown               Undo the host changes from prepare (same boot; a reboot does the same).
   purge [--yes] [--keep-downloads]
                          Remove everything prepare produced, incl. the data store. Then rm -rf is safe.
 
-Typical first flash:   ./jetson prepare   →   put the board in REC   →   ./jetson flash
+Typical first flash:   put the board in REC   →   ./jetson prepare   →   ./jetson flash
 USAGE
 }
 
@@ -159,14 +160,40 @@ _sudo_once() {
   fi
 }
 
+# cmd_prepare [--no-board]
+# The last prepare step (l4t_initrd_flash --no-flash) runs NVIDIA's flash.sh,
+# which reads the board spec (BOARDID / FAB / BOARDSKU / BOARDREV) from the
+# EEPROM over the recovery USB link unless those are exported. So the board
+# must already be in recovery — checked up front rather than at minute 30.
 cmd_prepare() {
+  local no_board="" arg
+  for arg in "$@"; do
+    case "${arg}" in
+      --no-board) no_board=1 ;;
+      *) printf 'jetson: prepare: unknown option %s\n\n' "${arg}" >&2; _usage; exit 2 ;;
+    esac
+  done
+  _say "prepare — preflight"
+  if [[ -z "${no_board}" ]]; then
+    local rec rc=0
+    rec="$(_recovery_line)" || rc=$?
+    case "${rc}" in
+      2) _die_multiple_recovery "${rec}" ;;
+      1) _rec_instructions
+         _die "no Jetson in recovery — prepare's last step reads the board spec from the board over USB" \
+              "put the board in recovery (./jetson wait-rec), then ./jetson prepare. Exporting BOARDID FAB BOARDSKU BOARDREV yourself? add --no-board" ;;
+    esac
+    _ok "Jetson in recovery: ${rec}"
+  else
+    _warn "--no-board: skipping the recovery check; flash.sh needs BOARDID FAB BOARDSKU BOARDREV in the environment"
+  fi
   _say "prepare — host setup (needs sudo once)"
   _sudo_once
   "${HOST_SETUP_BIN}" || _die "host_setup.sh failed — fix what it reported, then re-run ./jetson prepare"
   "${INIT_DATA_DIRS_BIN}" || _die "init_data_dirs.sh failed"
   _say "prepare — download BSP + build flash images (make run -- -t prepare, ~30 min first time)"
   (cd "${_REPO}" && make run -- -t prepare) || _die "prepare failed — see the log above" "fix the cause, then re-run ./jetson prepare (it resumes where it stopped)"
-  _say "prepare — done. Next: put the board in REC, then ./jetson flash"
+  _say "prepare — done. Next: ./jetson flash (the board is still in recovery)"
 }
 
 # cmd_wait_rec [seconds] — 0 = wait forever. Ctrl-C exits 130 and changes
@@ -205,10 +232,10 @@ cmd_wait_rec() {
 }
 
 cmd_all() {
-  _say "[1/3] prepare"
-  cmd_prepare
-  _say "[2/3] wait for recovery"
+  _say "[1/3] wait for recovery"
   cmd_wait_rec "${1:-0}"
+  _say "[2/3] prepare"
+  cmd_prepare
   _say "[3/3] flash"
   cmd_flash
 }
@@ -311,7 +338,7 @@ main() {
   _no_args() { (( $# == 0 )) || { printf 'jetson: %s takes no arguments (got: %s)\n\n' "${cmd}" "$*" >&2; _usage; exit 2; }; }
   case "${cmd}" in
     status)   [[ $# -eq 0 || ( $# -eq 1 && "$1" == "--strict" ) ]] || { _usage; exit 2; }; cmd_status "$@" ;;
-    prepare)  _no_args "$@"; cmd_prepare ;;
+    prepare)  cmd_prepare "$@" ;;
     wait-rec) (( $# <= 1 )) || { _usage; exit 2; }; cmd_wait_rec "$@" ;;
     flash)    _no_args "$@"; cmd_flash ;;
     all)      (( $# <= 1 )) || { _usage; exit 2; }; cmd_all "$@" ;;

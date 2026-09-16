@@ -155,9 +155,9 @@ EOF
 # ── prepare ──────────────────────────────────────────────────────────
 
 @test "prepare validates sudo once, then host_setup → init_data_dirs → make run -t prepare" {
-  run "${JETSON}" prepare
+  LSUSB_OUT="${REC}" run "${JETSON}" prepare
   assert_success
-  run cat "${CALLS}"
+  run grep -v '^lsusb' "${CALLS}"                     # the recovery preflight probes first (#97)
   assert_line --index 0 --regexp '^sudo (-n )?-v$'   # -n when there is no tty
   assert_line --index 1 'host_setup.sh '
   assert_line --index 2 'init_data_dirs.sh '
@@ -166,7 +166,7 @@ EOF
 
 @test "prepare stops when host_setup fails and never reaches make" {
   printf '#!/usr/bin/env bash\nexit 1\n' >"${HOST_SETUP_BIN}"
-  run "${JETSON}" prepare
+  LSUSB_OUT="${REC}" run "${JETSON}" prepare
   assert_failure
   assert_output --partial 'host_setup'
   run cat "${CALLS}"
@@ -175,7 +175,7 @@ EOF
 
 # ── all ──────────────────────────────────────────────────────────────
 
-@test "all runs prepare, waits for recovery, then flashes — in that order" {
+@test "all runs wait-rec, prepare, then flash — in that order" {
   WAIT_REC_INTERVAL=0.05 LSUSB_REC_AFTER=2 run "${JETSON}" all
   assert_success
   assert_output --partial '[1/3]'
@@ -327,4 +327,41 @@ EOF
   LSUSB_OUT=$'Bus 003 Device 049: ID 0955:7023 NVIDIA Corp. APX\nBus 001 Device 007: ID 0955:7523 NVIDIA Corp. APX' run "${JETSON}" flash
   assert_failure 1
   refute_output --partial 'no Jetson in recovery'
+}
+
+# ── #97: prepare needs the board in recovery ─────────────────────────
+
+@test "prepare refuses when no Jetson is in recovery: step 10/10 reads the board spec over USB" {
+  LSUSB_OUT="${BOOTED}" run "${JETSON}" prepare
+  assert_failure
+  assert_output --partial 'Hold the REC button'
+  assert_output --partial 'board spec'
+  run cat "${CALLS}"
+  refute_output --partial 'make'
+  refute_output --partial 'host_setup'
+}
+
+@test "prepare --no-board skips the recovery preflight for users exporting BOARDID/FAB/BOARDSKU/BOARDREV" {
+  LSUSB_OUT="${BOOTED}" run "${JETSON}" prepare --no-board
+  assert_success
+  run cat "${CALLS}"
+  assert_output --partial 'make run -- -t prepare'
+}
+
+@test "prepare with the board in recovery proceeds" {
+  LSUSB_OUT="${REC}" run "${JETSON}" prepare
+  assert_success
+}
+
+@test "all waits for recovery BEFORE prepare, then flashes" {
+  WAIT_REC_INTERVAL=0.05 LSUSB_REC_AFTER=2 run "${JETSON}" all
+  assert_success
+  assert_output --partial '[1/3] wait for recovery'
+  assert_output --partial '[2/3] prepare'
+  assert_output --partial '[3/3] flash'
+  run grep -vE '^(lsusb|sudo)' "${CALLS}"
+  assert_line --index 0 'host_setup.sh '
+  assert_line --index 2 'make run -- -t prepare'
+  assert_line --index 3 'nm_flash_guard.sh auto'
+  assert_line --index 4 'make run -- -t flash'
 }

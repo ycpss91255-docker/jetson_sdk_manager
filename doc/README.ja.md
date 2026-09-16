@@ -9,7 +9,7 @@
 > この日本語訳は英語版から翻訳したものです。内容に差異がある場合は英語版（[README.md](../README.md)）が正本です。
 
 
-> **⚠ この文書は旧手順のままです。** 新しい入口は `./jetson status` → `./jetson prepare` → REC モードへ → `./jetson flash` です([README.md](../README.md) / [繁體中文](README.zh-TW.md) に REC モードの図解あり)。以下の手動コマンドも引き続き有効で、`./jetson` はそれらを順に呼ぶだけです。
+> **⚠ この文書は旧手順のままです。** 新しい入口は `./jetson status` → **先に REC モードへ** → `./jetson prepare` → `./jetson flash` です([README.md](../README.md) / [繁體中文](README.zh-TW.md) に REC モードの図解あり)。注意:以下の旧説明と異なり、**prepare にもボードが recovery 状態である必要があります**(最終ステップで USB 経由に BOARDID/FAB/BOARDSKU/BOARDREV を読み取るため。これらを自分で export する場合は `./jetson prepare --no-board`)。`./jetson all` の順序は wait-rec → prepare → flash です。`timeout in USB write` が出たら、まず完全に電源を切って recovery に入れ直してから再実行してください。以下の手動コマンドも引き続き有効で、`./jetson` はそれらを順に呼ぶだけです。
 
 ---
 
@@ -95,7 +95,7 @@ make run -- -t prepare && ./script/nm_flash_guard.sh auto && make run -- -t flas
 
   **2 種類の「Error 114」原因 — 混同しないこと。** (a) **`flash` のごく開始時点**で、`RPC: Program not registered` / `NFS server is not running` を伴う `Error 114` は、host の `nfsd` モジュールがロードされていないことを意味します — `host_setup.sh`（または `sudo modprobe nfsd`）で修正。 (b) **転送の途中**で、`Error 114` / `NFS server` 失敗として現れる停止は、ほぼ常に `nfsd` ではなく **NetworkManager** が USB リンクを破壊しているのが原因です — `./script/nm_flash_guard.sh auto` で修正。対応する 2 つの [トラブルシューティング](#トラブルシューティング) 項目を参照。
 - **NetworkManager の host では `./script/nm_flash_guard.sh auto` — 事実上必須。** ほとんどのラップトップ / デスクトップは NetworkManager を実行しており、これが Jetson の USB gadget インターフェースを DHCP プローブしてフラッシュの途中でリンクを破壊します。`make run -- -t flash` の前に `nm_flash_guard.sh auto` を実行してください；これはフラッシュの間そのインターフェースを unmanaged にマークし、ボード起動時に NM を自動復元します。host が NetworkManager を実行していないことを確認している場合のみスキップしてください。
-- **Jetson が APX recovery (REC) に入っていること**（`flash` stage のみ；`prepare` は Jetson 接続不要）。
+- **Jetson が APX recovery (REC) に入っていること** — `prepare` と `flash` の両方で必要:`prepare` の最終ステップは USB 経由でボードの BOARDID/FAB/BOARDSKU/BOARDREV を読み取ります(これらを自分で export する場合は `./jetson prepare --no-board`)。
 
 ## `jetson.yaml` の設定
 
@@ -337,7 +337,6 @@ jetson_sdk_manager/
 │   ├── adr/                     # アーキテクチャ決定記録
 │   ├── changelog/CHANGELOG.md
 │   ├── test/TEST.md
-│   ├── Flash_Workflow.md        # prepare/flash フェーズの詳細解説
 │   ├── README.zh-TW.md
 │   ├── README.zh-CN.md
 │   └── README.ja.md

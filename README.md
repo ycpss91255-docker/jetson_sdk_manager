@@ -28,14 +28,14 @@ git clone https://github.com/ycpss91255-docker/jetson_sdk_manager.git   # git cl
 cd jetson_sdk_manager
 
 ./jetson status      # what is ready, what is not — fix any ✘ it shows
-./jetson prepare     # host setup (asks for sudo once) + download BSP + build flash images. ~30 min, no board needed
-#   → put the Jetson into recovery: see the next section
+#   → put the Jetson into recovery FIRST: see the next section (prepare's last step reads the board's ID over USB)
+./jetson prepare     # host setup (asks for sudo once) + download BSP + build flash images. ~30 min
 ./jetson flash       # write the images over USB. ~10 min
 ```
 
-`./jetson all` does the three in a row and waits for you to put the board into recovery in between. Everything `./jetson` runs is an ordinary script or `make` target — see [Going deeper](#going-deeper).
+`./jetson all` waits for the board to show up in recovery, then does prepare and flash in a row. Everything `./jetson` runs is an ordinary script or `make` target — see [Going deeper](#going-deeper).
 
-What it takes: an x86_64 Linux host with Docker (usable without `sudo`), one USB-C cable, ~20 GB free, and roughly 40 minutes the first time (later runs skip the download and the finished steps). A checkout on NTFS / exFAT is fine — `prepare` handles it ([how](#prerequisites)).
+What it takes: an x86_64 Linux host with Docker (usable without `sudo`), one USB-C cable, ~20 GB free, and roughly 40 minutes the first time (later runs skip the download and the finished steps). The board has to be in recovery for the whole run: prepare's final step reads the board spec (ID / SKU / revision) from its EEPROM, and flash writes to it. A checkout on NTFS / exFAT is fine — `prepare` handles it ([how](#prerequisites)).
 
 ## Entering recovery (REC) mode
 
@@ -77,7 +77,7 @@ Check from the host:
 | `0955:7020 … L4T (Linux for Tegra) running on Tegra` | booted into the OS — redo the sequence |
 | nothing | not detected — other cable / port / no hub; check the cable is on the port next to the buttons |
 
-Recovery runs over USB 2.0; that is normal. The board stays in recovery until power-cycled, so entering it early and flashing later is fine. For the official photos and the full button reference see NVIDIA's [Jetson AGX Orin Developer Kit User Guide](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) and the [Jetson Linux Quick Start](https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/IN/QuickStart.html) (section "To Flash the Jetson Developer Kit Operating Software" — "force recovery mode").
+Recovery runs over USB 2.0; that is normal. The board stays in recovery until power-cycled, so enter it once before `./jetson prepare` and leave it. If a step ends in `ERROR: might be timeout in USB write`, first do a full hardware power-cycle back into recovery and re-run (prepare resumes where it stopped) — one possible cause is stale Boot ROM USB state after an interrupted attempt, and a power-cycle clears that. If it persists: direct host port, another cable, then `./jetson status` for the host USB settings. For the official photos and the full button reference see NVIDIA's [Jetson AGX Orin Developer Kit User Guide](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) and the [Jetson Linux Quick Start](https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/IN/QuickStart.html) (section "To Flash the Jetson Developer Kit Operating Software" — "force recovery mode").
 
 ## After the flash
 
@@ -192,6 +192,5 @@ Two deliberate exceptions to "everything under the checkout": Docker images (`ma
 ## Going deeper
 
 - **[doc/ARCHITECTURE.md](doc/ARCHITECTURE.md)** — what each `./jetson` command runs under the hood, `host_setup.sh` step by step, the Docker stages, the two flashing paths (factory flash vs. SDK Manager `cli` / `gui`), persistent data, the build graph, directory layout.
-- **[doc/Flash_Workflow.md](doc/Flash_Workflow.md)** — the `prepare` / `flash` phases in detail.
 - **[doc/test/TEST.md](doc/test/TEST.md)** — what CI proves (build, lint, bats, a real loop-mount lane) and what only hardware can (per-preset verification status: `agx-orin-emmc` verified on hardware 2026-06; the other presets are config-validated only).
 - **[doc/adr/](doc/adr/)** — architecture decisions; **[doc/changelog/CHANGELOG.md](doc/changelog/CHANGELOG.md)**.

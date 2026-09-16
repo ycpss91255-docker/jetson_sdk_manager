@@ -56,7 +56,10 @@ status_jetson() {
 }
 
 # ── prepare progress (.prepared.yaml) ────────────────────────────────
-STATUS_PHASES="bsp rootfs binaries user network images"
+# 'network' is deliberately absent: prepare.sh records it only when
+# jetson.yaml asks for a static profile (DHCP is the default), so it is not
+# a completeness criterion. 'images' is what flash needs.
+STATUS_PHASES="bsp rootfs binaries user images"
 
 # status_markers — every .prepared.yaml under data/jetson_l4t, one per line.
 # More than one means two L4T trees were prepared (board switch without
@@ -77,7 +80,7 @@ status_prepare() {
   local marker missing="" p n
   n="$(status_markers | grep -c . || true)"
   if (( n == 0 )); then
-    _st warn "prepare has not run — ./jetson prepare (~30 min, no board needed)"
+    _st warn "prepare has not run — put the board in recovery, then ./jetson prepare (~30 min; its last step reads the board spec over USB)"
     return 0
   elif (( n > 1 )); then
     _st warn "more than one prepared L4T tree under data/jetson_l4t (${n}) — ambiguous; ./script/clean.sh l4t and re-run ./jetson prepare"

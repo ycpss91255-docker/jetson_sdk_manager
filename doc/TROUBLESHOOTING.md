@@ -124,9 +124,13 @@ sudo apt update && sudo apt install -y nvidia-jetpack
 
 This is one more reason the factory `prepare` / `flash` path is the documented default: it installs the SDK components on the booted board via apt, with no GUI step to hang.
 
+### `Error: No Board Spec. and no target connected, exit.` (prepare, step 10/10)
+
+NVIDIA's `flash.sh` needs the board spec — `BOARDID`, `FAB`, `BOARDSKU`, `BOARDREV` — to lay out the images, and unless you export those it reads them from the board's EEPROM over the recovery USB link. So prepare's last step needs a Jetson in recovery, exactly like flash does. Put the board in recovery and re-run `./jetson prepare` (it resumes at 10/10). If you know the spec and want to prepare with no board attached: export the four variables and run `./jetson prepare --no-board`.
+
 ### `ERROR: might be timeout in USB write` / `Return value 3`
 
-Boot ROM communication stalls during USB bulk transfer:
+Seen at the first RCM write of either **flash** or **prepare's step 10/10** (`Sending bct_br` → `Parsing board information failed` → `failed to generate images`). Boot ROM communication stalls during USB bulk transfer:
 
 ```
 Sending bct_br
@@ -134,7 +138,7 @@ ERROR: might be timeout in USB write.
 Error: Return value 3
 ```
 
-Stale USB endpoint state from a previous interrupted flash. A **hardware** power cycle back into APX recovery is required — power off, hold REC, reconnect power, release (`tegrarcm_v2 --reboot recovery` is not enough).
+One possible cause is Boot ROM USB state left over from a previous interrupted attempt (#10); a **hardware** power cycle clears that — power off, hold REC, reconnect power, release (`tegrarcm_v2 --reboot recovery` is not enough) — so do it first, then re-run the same command; prepare resumes where it stopped. If it persists after a clean power cycle, work through the USB path: a direct host port, another cable, host USB settings (`./jetson status` checks autosuspend / usbfs buffer). In the setup reported in #48, switching between a hub and a direct port did not change the result, so try the power cycle first.
 
 Also confirm `./script/host_setup.sh` ran this boot — it raises the USB buffer and disables autosuspend (see [README → Prerequisites](../README.md#prerequisites)).
 

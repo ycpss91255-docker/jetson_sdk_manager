@@ -244,10 +244,8 @@ main() {
 
 [prepare] Phase 1 complete. Volume jetson_l4t is ready.
 
-Next step:
-  1. Put Jetson into APX recovery: power off, hold Force-Recovery, reconnect power, release Force-Recovery.
-  2. Confirm the link: make run -- -t probe   (exits 0 when a Jetson is in APX)
-  3. Run: make run -- -t flash
+Next step (the board is still in APX recovery — leave it there):
+  ./jetson flash          # or: ./script/nm_flash_guard.sh auto && make run -- -t flash
 
 EOF
 }
