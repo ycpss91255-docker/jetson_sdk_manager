@@ -37,21 +37,25 @@ _step() { printf '\n\033[36m[flash] %s\033[0m\n' "$1" >&2; }
 # script is absent altogether (tests without a full tree).
 _patch_initrd_boot_timeout() {
   local f="$1/tools/kernel_flash/l4t_initrd_flash_internal.sh" secs="$2"
+  # Anchored to a whole assignment line so a mention inside a comment or a
+  # string can neither satisfy the check nor get rewritten.
   local want="maxcount=\${timeout:-${secs}}"
+  local re_any='^[[:space:]]*maxcount=\$\{timeout:-[0-9]+\}[[:space:]]*$'
+  local re_want="^[[:space:]]*maxcount=\\\$\\{timeout:-${secs}\\}[[:space:]]*\$"
   [[ -f "${f}" ]] || return 0
-  if grep -qF "${want}" "${f}"; then
+  if grep -qE "${re_want}" "${f}"; then
     printf '  initrd boot wait already %ss\n' "${secs}" >&2
     return 0
   fi
-  if ! grep -qE 'maxcount=\$\{timeout:-[0-9]+\}' "${f}"; then
+  if ! grep -qE "${re_any}" "${f}"; then
     emit_error \
       --category validate \
-      --detail "cannot set the initrd boot wait: no 'maxcount=\${timeout:-N}' line in ${f} (NVIDIA changed the script?)" \
+      --detail "cannot set the initrd boot wait: no 'maxcount=\${timeout:-N}' assignment line in ${f} (NVIDIA changed the script?)" \
       --action "inspect wait_for_booting() in that file and update _patch_initrd_boot_timeout in flash.sh"
     return 1
   fi
-  sudo sed -i -E "s/maxcount=\\$\{timeout:-[0-9]+\}/${want//\\/\\\\}/" "${f}"
-  if ! grep -qF "${want}" "${f}"; then
+  sudo sed -i -E "s/^([[:space:]]*)maxcount=\\$\{timeout:-[0-9]+\}([[:space:]]*)$/\1${want//\\/\\\\}\2/" "${f}"
+  if ! grep -qE "${re_want}" "${f}"; then
     emit_error \
       --category validate \
       --detail "initrd boot wait patch did not land in ${f}" \

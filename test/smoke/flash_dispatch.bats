@@ -485,3 +485,22 @@ EOF
   assert_output --partial 'initrd boot wait'
   [[ ! -s "${ARGV_LOG}" ]]
 }
+
+@test "flash refuses when the old timeout literal survives only in a comment (anchored match)" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  cat >"${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash_internal.sh" <<'EOF'
+#!/bin/bash
+wait_for_booting() {
+	# old: maxcount=${timeout:-120}
+	maxcount=$((timeout_s + 0))
+}
+EOF
+  yq -i '.phases |= (. + ["images"] | unique)' "${L4T_DIR}/.prepared.yaml"
+  run "${SCRIPT_DIR}/flash.sh"
+  assert_failure
+  assert_output --partial 'initrd boot wait'
+  [[ ! -s "${ARGV_LOG}" ]]
+  run grep -c 'maxcount=${timeout:-600}' "${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash_internal.sh"
+  assert_output '0'
+}
