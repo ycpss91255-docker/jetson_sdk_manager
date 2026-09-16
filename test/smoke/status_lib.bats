@@ -49,7 +49,13 @@ EOF
   USBCORE_PARAMS="${BATS_TEST_TMPDIR}/usbcore"; mkdir -p "${USBCORE_PARAMS}"; export USBCORE_PARAMS
   printf -- '-1\n' >"${USBCORE_PARAMS}/autosuspend"; printf '2048\n' >"${USBCORE_PARAMS}/usbfs_memory_mb"
   NFSD_SYSFS="${BATS_TEST_TMPDIR}/sys-module-nfsd"; export NFSD_SYSFS
-  USB_SS_GUARD_STATE="${BATS_TEST_TMPDIR}/usb-ss-guard.state"; export USB_SS_GUARD_STATE
+  # usb_ss_guard (#100): state dir + a sysfs fixture with one root-hub port.
+  USB_SS_GUARD_STATE_DIR="${BATS_TEST_TMPDIR}/run/usb-ss-guard"; export USB_SS_GUARD_STATE_DIR
+  mkdir -p "${USB_SS_GUARD_STATE_DIR}"
+  USB_SYSFS="${BATS_TEST_TMPDIR}/sysfs"; export USB_SYSFS
+  SS_PORT="${USB_SYSFS}/usb2/2-0:1.0/usb2-port3"
+  mkdir -p "${SS_PORT}"
+  printf '0\n' >"${SS_PORT}/disable"
 }
 
 _level() { cut -f1; }
@@ -164,12 +170,28 @@ _level() { cut -f1; }
   assert_output --partial 'SuperSpeed'
 }
 
-@test "status_usb_ss_guard: state file present → warn naming the port and the enable command" {
-  printf '/sys/bus/usb/devices/2-0:1.0/usb2-port3\n' >"${USB_SS_GUARD_STATE}"
+@test "status_usb_ss_guard: state present and the port reads 1 → warn naming the port and the enable command" {
+  printf '1\n' >"${SS_PORT}/disable"
+  printf 'port=%s\ntoken=abc\n' "${SS_PORT}" >"${USB_SS_GUARD_STATE_DIR}/state"
   run status_usb_ss_guard
   assert_output --partial $'warn\t'
   assert_output --partial 'usb2-port3'
+  assert_output --partial 'disabled'
   assert_output --partial 'usb_ss_guard.sh enable'
+}
+
+@test "status_usb_ss_guard: state present but the port reads 0 → warn 'stale'" {
+  printf 'port=%s\ntoken=abc\n' "${SS_PORT}" >"${USB_SS_GUARD_STATE_DIR}/state"
+  run status_usb_ss_guard
+  assert_output --partial $'warn\t'
+  assert_output --partial 'stale'
+}
+
+@test "status_usb_ss_guard: state names a path that is not a root-hub port → warn 'not a valid'" {
+  printf 'port=%s\ntoken=abc\n' "${BATS_TEST_TMPDIR}/elsewhere" >"${USB_SS_GUARD_STATE_DIR}/state"
+  run status_usb_ss_guard
+  assert_output --partial $'warn\t'
+  assert_output --partial 'not a valid'
 }
 
 # ── config ───────────────────────────────────────────────────────────

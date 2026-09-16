@@ -91,9 +91,8 @@ EOF
   : >"${USBCORE_PARAMS}/usbfs_memory_mb"
   export USBCORE_PARAMS
 
-  # No watcher pidfiles by default.
+  # No watcher pidfile by default.
   export NM_GUARD_PIDFILE="${BATS_TEST_TMPDIR}/nm-guard.pid"
-  export USB_SS_GUARD_PIDFILE="${BATS_TEST_TMPDIR}/usb-ss-guard.pid"
 }
 
 @test "host_teardown unmounts the bridge, restores USB defaults, re-enables NM" {
@@ -165,16 +164,10 @@ EOF
 
 # ── USB SuperSpeed guard (#100) ──────────────────────────────────────
 
-@test "host_teardown re-enables the connector's SuperSpeed half (usb_ss_guard.sh enable) and stops its watcher" {
-  sleep 300 &
-  local wpid=$!
-  printf '%s\n' "${wpid}" >"${USB_SS_GUARD_PIDFILE}"
-
+@test "host_teardown re-enables the connector's SuperSpeed half via usb_ss_guard.sh enable (which stops its own watcher)" {
   run "${HOST_TEARDOWN}"
   assert_success
-  assert_output --partial "stopped usb_ss_guard auto watcher (PID ${wpid})"
-  ! kill -0 "${wpid}" 2>/dev/null
-  [[ ! -e "${USB_SS_GUARD_PIDFILE}" ]]
+  assert_output --partial '6/6'
   run cat "${USB_SS_GUARD_LOG}"
   assert_output 'enable'
 }
