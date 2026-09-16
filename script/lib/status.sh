@@ -56,7 +56,10 @@ status_jetson() {
 }
 
 # ── prepare progress (.prepared.yaml) ────────────────────────────────
-STATUS_PHASES="bsp rootfs binaries user network images"
+# 'network' is deliberately absent: prepare.sh records it only when
+# jetson.yaml asks for a static profile (DHCP is the default), so it is not
+# a completeness criterion. 'images' is what flash needs.
+STATUS_PHASES="bsp rootfs binaries user images"
 
 # status_markers — every .prepared.yaml under data/jetson_l4t, one per line.
 # More than one means two L4T trees were prepared (board switch without

@@ -7,7 +7,7 @@
 **[English](../README.md)** | **[繁體中文](README.zh-TW.md)** | **[简体中文](README.zh-CN.md)** | **[日本語](README.ja.md)**
 
 
-> **⚠ 本文档对应的是旧版流程。** 新的入口是 `./jetson status` → `./jetson prepare` → 进入 REC → `./jetson flash`(见 [README.md](../README.md) / [繁體中文](README.zh-TW.md),含 REC 模式图解)。下面的手动命令仍然有效,`./jetson` 只是把它们串起来。
+> **⚠ 本文档对应的是旧版流程。** 新的入口是 `./jetson status` → **先进入 REC** → `./jetson prepare` → `./jetson flash`(见 [README.md](../README.md) / [繁體中文](README.zh-TW.md),含 REC 模式图解)。注意:与下文旧说明不同,**prepare 也需要板子处于 recovery**(最后一步通过 USB 读取板子的 BOARDID/FAB/BOARDSKU/BOARDREV;自行 export 这四个变量的用户可用 `./jetson prepare --no-board`);`./jetson all` 的顺序是 wait-rec → prepare → flash。遇到 `timeout in USB write` 时先完整断电重新进入 recovery 再重跑。下面的手动命令仍然有效,`./jetson` 只是把它们串起来。
 
 ---
 

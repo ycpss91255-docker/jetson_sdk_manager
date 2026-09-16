@@ -9,7 +9,7 @@
 > この日本語訳は英語版から翻訳したものです。内容に差異がある場合は英語版（[README.md](../README.md)）が正本です。
 
 
-> **⚠ この文書は旧手順のままです。** 新しい入口は `./jetson status` → `./jetson prepare` → REC モードへ → `./jetson flash` です([README.md](../README.md) / [繁體中文](README.zh-TW.md) に REC モードの図解あり)。以下の手動コマンドも引き続き有効で、`./jetson` はそれらを順に呼ぶだけです。
+> **⚠ この文書は旧手順のままです。** 新しい入口は `./jetson status` → **先に REC モードへ** → `./jetson prepare` → `./jetson flash` です([README.md](../README.md) / [繁體中文](README.zh-TW.md) に REC モードの図解あり)。注意:以下の旧説明と異なり、**prepare にもボードが recovery 状態である必要があります**(最終ステップで USB 経由に BOARDID/FAB/BOARDSKU/BOARDREV を読み取るため。これらを自分で export する場合は `./jetson prepare --no-board`)。`./jetson all` の順序は wait-rec → prepare → flash です。`timeout in USB write` が出たら、まず完全に電源を切って recovery に入れ直してから再実行してください。以下の手動コマンドも引き続き有効で、`./jetson` はそれらを順に呼ぶだけです。
 
 ---
 

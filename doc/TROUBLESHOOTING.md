@@ -138,7 +138,7 @@ ERROR: might be timeout in USB write.
 Error: Return value 3
 ```
 
-Stale USB endpoint state from a previous interrupted attempt (#10). A **hardware** power cycle back into APX recovery is required — power off, hold REC, reconnect power, release (`tegrarcm_v2 --reboot recovery` is not enough) — then re-run the same command; prepare resumes where it stopped. Whether the board hangs off a hub or a direct port has not made a difference in practice (#48).
+The usual cause is Boot ROM USB state left over from a previous interrupted attempt (#10), which only a **hardware** power cycle clears — power off, hold REC, reconnect power, release (`tegrarcm_v2 --reboot recovery` is not enough) — then re-run the same command; prepare resumes where it stopped. If it persists after a clean power cycle, work through the USB path: a direct host port, another cable, host USB settings (`./jetson status` checks autosuspend / usbfs buffer). In the setup reported in #48, switching between a hub and a direct port did not change the result, so try the power cycle first.
 
 Also confirm `./script/host_setup.sh` ran this boot — it raises the USB buffer and disables autosuspend (see [README → Prerequisites](../README.md#prerequisites)).
 

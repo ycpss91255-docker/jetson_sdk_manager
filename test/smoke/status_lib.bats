@@ -230,3 +230,12 @@ _level() { cut -f1; }
   refute_output --partial 'no board needed'
   assert_output --partial 'recovery'
 }
+
+@test "status_prepare: 'network' is optional (only recorded for a static profile) — ok without it" {
+  local tree="${REPO}/data/jetson_l4t/JetPack_6.2.2_Linux_jetson-agx-orin-devkit/Linux_for_Tegra"
+  mkdir -p "${tree}"
+  printf 'phases:\n  - bsp\n  - rootfs\n  - binaries\n  - user\n  - images\n' >"${tree}/.prepared.yaml"
+  run status_prepare
+  assert_output --partial $'ok\t'
+  refute_output --partial 'missing'
+}

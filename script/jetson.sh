@@ -57,7 +57,7 @@ Usage: ./jetson <command>
                          the last step reads its board spec over USB (--no-board if you export BOARDID/FAB/…).
   wait-rec [seconds]     Show how to enter recovery (REC) and wait until the board appears.
   flash                  Write the images to a Jetson that is in recovery (~10 min).
-  all                    wait-rec → prepare → flash, stopping at the first problem.
+  all [seconds]          wait-rec (timeout: seconds, default 0 = forever) → prepare → flash, stopping at the first problem.
   teardown               Undo the host changes from prepare (same boot; a reboot does the same).
   purge [--yes] [--keep-downloads]
                          Remove everything prepare produced, incl. the data store. Then rm -rf is safe.
