@@ -6,6 +6,9 @@
 
 **[English](../README.md)** | **[繁體中文](README.zh-TW.md)** | **[简体中文](README.zh-CN.md)** | **[日本語](README.ja.md)**
 
+
+> **⚠ 本文档对应的是旧版流程。** 新的入口是 `./jetson status` → `./jetson prepare` → 进入 REC → `./jetson flash`(见 [README.md](../README.md) / [繁體中文](README.zh-TW.md),含 REC 模式图解)。下面的手动命令仍然有效,`./jetson` 只是把它们串起来。
+
 ---
 
 ## Supported versions

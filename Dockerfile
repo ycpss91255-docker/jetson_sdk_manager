@@ -241,7 +241,7 @@ RUN shellcheck -S warning /lint/wrapper/*.sh /lint/lib/*.sh && \
         /lint/gui-entrypoint.sh /lint/nm_flash_guard.sh \
         /lint/sdkm-entrypoint.sh \
         /lint/init_data_dirs.sh /lint/entrypoint.sh \
-        /lint/host_setup.sh /lint/host_teardown.sh \
+        /lint/host_setup.sh /lint/host_teardown.sh /lint/jetson.sh \
         /lint/script_lib/*.sh
 WORKDIR /lint
 RUN hadolint Dockerfile
@@ -274,6 +274,8 @@ COPY --chmod=0755 script/sdkm-entrypoint.sh /opt/jetson_install/sdkm-entrypoint.
 COPY --chmod=0755 script/host_setup.sh /opt/jetson_install/host_setup.sh
 COPY --chmod=0755 script/host_teardown.sh /opt/jetson_install/host_teardown.sh
 COPY --chmod=0755 script/clean.sh /opt/jetson_install/clean.sh
+# ./jetson entry point (#95) — copied so jetson_cli.bats runs here too.
+COPY --chmod=0755 script/jetson.sh /opt/jetson_install/jetson.sh
 COPY --chmod=0755 script/lib /opt/jetson_install/lib
 
 # Smoke test (shared from template + repo-specific)

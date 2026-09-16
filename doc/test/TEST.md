@@ -21,6 +21,25 @@ The store lifecycle (`host_setup.sh` step 0 → `host_teardown.sh` → `clean.sh
 
 **HITL-only for this feature:** the system job forces `L4T_STORE_BACKEND=loop-image` on an ext4 runner. It proves the loop lifecycle, not ntfs-3g behaviour — sparse-file allocation and prepare throughput through ext4 → loop → FUSE → NTFS can only be observed on a real NTFS checkout.
 
+## Verification status (per preset)
+
+Be honest about what has actually been flashed versus what is only known to build and validate.
+
+**What CI proves (and only this):** image build for every stage, `shellcheck` + `hadolint` lint, the `bats` smoke suite, and `sdkmanager --ver`. **CI does NOT run a real flash** — no Jetson hardware is attached in CI, so no end-to-end flash, NFS serve, or eMMC write is exercised there. See the HITL-ONLY section below for the steps only hardware-in-the-loop testing can cover.
+
+Per-preset status:
+
+| Preset | Status |
+|---|---|
+| `agx-orin-emmc.yaml` | verified on hardware 2026-06, JetPack 6.2.2 |
+| `agx-orin-nvme.yaml` | config-validated only |
+| `agx-orin-usb.yaml` | config-validated only |
+| `orin-nx-nvme.yaml` | config-validated only |
+| `orin-nano-nvme.yaml` | config-validated only |
+| `orin-nano-sd.yaml` | config-validated only |
+
+"config-validated only" means the preset parses, resolves its aliases, and builds flash images, but the full `flash` stage to that board + storage has not yet been confirmed on real hardware. The mechanism is identical across presets, so config-validated presets are expected to work; they just have not been signed off end to end.
+
 ## What CI actually proves
 
 CI is build-and-lint plus a tiny smoke suite. It runs on GitHub-hosted x86_64 runners with **no Jetson attached**, so nothing below the line "real flash" is exercised:
@@ -32,21 +51,6 @@ CI is build-and-lint plus a tiny smoke suite. It runs on GitHub-hosted x86_64 ru
 - `sdkmanager --ver` (the `cli-test` / `gui-test` stages).
 
 CI does **NOT** flash a board, serve NFS to a device, or write eMMC / NVMe / USB / SD. Treat green CI as "it builds and the scripts are well-formed", not "it flashes".
-
-## Verification status (per preset)
-
-Mirrors the [Verification status](../../README.md#verification-status) table in the README.
-
-| Preset | Status |
-|---|---|
-| `agx-orin-emmc.yaml` | verified on hardware 2026-06, JetPack 6.2.2 |
-| `agx-orin-nvme.yaml` | config-validated only |
-| `agx-orin-usb.yaml` | config-validated only |
-| `orin-nx-nvme.yaml` | config-validated only |
-| `orin-nano-nvme.yaml` | config-validated only |
-| `orin-nano-sd.yaml` | config-validated only |
-
-"config-validated only" = the preset parses, resolves its aliases, and builds flash images, but the full `flash` to that board + storage has not been confirmed on real hardware.
 
 ## HITL-ONLY paths (CI cannot verify these)
 
