@@ -95,3 +95,65 @@ store_marker_read() {
   line="$(grep -m1 "^${key}=" "${marker}")" || return 1
   printf '%s\n' "${line#*=}"
 }
+
+# _store_reject <reason>  — print a diagnostic and return 1.
+_store_reject() {
+  printf 'store: marker rejected — %s\n' "$1" >&2
+  return 1
+}
+
+# _store_path_is_inside <path> <root>
+_store_path_is_inside() {
+  local p="$1" root="$2"
+  [[ "${p}" == "${root}" || "${p}" == "${root}/"* ]]
+}
+
+# store_marker_validate <marker_path> <repo_root>
+# The single gate every destructive step (purge) must pass. Refuses to bless
+# a marker that is malformed, from another checkout, of an unknown backend
+# or whose target is not what the backend expects. Diagnostics go to stderr.
+store_marker_validate() {
+  local marker="$1" repo_root="$2"
+  local version backend repo_id want_id target
+
+  [[ -f "${marker}" ]] || _store_reject "no marker at ${marker}" || return 1
+
+  version="$(store_marker_read "${marker}" version)" \
+    || _store_reject "missing version" || return 1
+  [[ "${version}" == "${STORE_MARKER_VERSION}" ]] \
+    || _store_reject "unsupported version=${version} (expected ${STORE_MARKER_VERSION})" || return 1
+
+  backend="$(store_marker_read "${marker}" backend)" \
+    || _store_reject "missing backend" || return 1
+
+  repo_id="$(store_marker_read "${marker}" repo_id)" \
+    || _store_reject "missing repo_id" || return 1
+  want_id="$(store_repo_id "${repo_root}")"
+  [[ "${repo_id}" == "${want_id}" ]] \
+    || _store_reject "repo_id ${repo_id} belongs to another checkout (this repo is ${want_id})" || return 1
+
+  case "${backend}" in
+    loop-image)
+      target="$(store_marker_read "${marker}" image)" \
+        || _store_reject "loop-image marker has no image=" || return 1
+      [[ "${target}" == /* ]] || _store_reject "image path is not absolute: ${target}" || return 1
+      [[ ! -L "${target}" ]] || _store_reject "image is a symlink: ${target}" || return 1
+      [[ -f "${target}" ]] || _store_reject "image is not a regular file: ${target}" || return 1
+      ;;
+    directory-bind)
+      target="$(store_marker_read "${marker}" store)" \
+        || _store_reject "directory-bind marker has no store=" || return 1
+      [[ "${target}" == /* ]] || _store_reject "store path is not absolute: ${target}" || return 1
+      [[ ! -L "${target}" ]] || _store_reject "store is a symlink: ${target}" || return 1
+      [[ -d "${target}" ]] || _store_reject "store is not a directory: ${target}" || return 1
+      [[ "${target}" != "/" ]] || _store_reject "store is /" || return 1
+      [[ "${target}" != "${HOME:-/nonexistent}" ]] || _store_reject "store is \$HOME" || return 1
+      ! _store_path_is_inside "$(readlink -f "${target}")" "$(readlink -f "${repo_root}")" \
+        || _store_reject "store is inside the repo (a directory-bind store must be on another filesystem): ${target}" || return 1
+      ;;
+    *)
+      _store_reject "unknown backend=${backend} (expected one of: ${STORE_BACKENDS})" || return 1
+      ;;
+  esac
+  return 0
+}

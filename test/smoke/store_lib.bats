@@ -110,3 +110,109 @@ setup() {
   refute_output "${id_a}"
   [[ "${id_a}" =~ ^[0-9a-f]{16}$ ]]
 }
+
+# ── marker: validation (the gate in front of every destructive step) ─
+
+# Helper: a repo skeleton with a valid loop-image marker + image file.
+_valid_loop_repo() {
+  REPO="${BATS_TEST_TMPDIR}/repo"
+  mkdir -p "${REPO}/data/jetson_l4t"
+  IMAGE="${REPO}/data/jetson_l4t.img"
+  : >"${IMAGE}"
+  MARKER="${REPO}/data/.l4t_store"
+  store_marker_write "${MARKER}" backend=loop-image \
+    "repo_id=$(store_repo_id "${REPO}")" "image=${IMAGE}"
+}
+
+@test "store_marker_validate accepts a well-formed loop-image marker" {
+  _valid_loop_repo
+  run store_marker_validate "${MARKER}" "${REPO}"
+  assert_success
+}
+
+@test "store_marker_validate accepts a directory-bind marker pointing at a directory" {
+  _valid_loop_repo
+  STORE_DIR="${BATS_TEST_TMPDIR}/ext4store"
+  mkdir -p "${STORE_DIR}"
+  store_marker_write "${MARKER}" backend=directory-bind \
+    "repo_id=$(store_repo_id "${REPO}")" "store=${STORE_DIR}"
+  run store_marker_validate "${MARKER}" "${REPO}"
+  assert_success
+}
+
+@test "store_marker_validate rejects a repo_id from another checkout" {
+  _valid_loop_repo
+  store_marker_write "${MARKER}" backend=loop-image repo_id=0000000000000000 "image=${IMAGE}"
+  run store_marker_validate "${MARKER}" "${REPO}"
+  assert_failure
+  assert_output --partial 'repo_id'
+}
+
+@test "store_marker_validate rejects an unknown backend" {
+  _valid_loop_repo
+  store_marker_write "${MARKER}" backend=docker-volume \
+    "repo_id=$(store_repo_id "${REPO}")" "image=${IMAGE}"
+  run store_marker_validate "${MARKER}" "${REPO}"
+  assert_failure
+  assert_output --partial 'backend'
+}
+
+@test "store_marker_validate rejects an unsupported marker version" {
+  _valid_loop_repo
+  sed -i 's/^version=1$/version=99/' "${MARKER}"
+  run store_marker_validate "${MARKER}" "${REPO}"
+  assert_failure
+  assert_output --partial 'version'
+}
+
+@test "store_marker_validate rejects a relative image path" {
+  _valid_loop_repo
+  store_marker_write "${MARKER}" backend=loop-image \
+    "repo_id=$(store_repo_id "${REPO}")" "image=data/jetson_l4t.img"
+  run store_marker_validate "${MARKER}" "${REPO}"
+  assert_failure
+  assert_output --partial 'absolute'
+}
+
+@test "store_marker_validate rejects / and \$HOME as a directory-bind store" {
+  _valid_loop_repo
+  for bad in / "${HOME}"; do
+    store_marker_write "${MARKER}" backend=directory-bind \
+      "repo_id=$(store_repo_id "${REPO}")" "store=${bad}"
+    run store_marker_validate "${MARKER}" "${REPO}"
+    assert_failure
+  done
+}
+
+@test "store_marker_validate rejects a directory-bind store inside the repo" {
+  _valid_loop_repo
+  store_marker_write "${MARKER}" backend=directory-bind \
+    "repo_id=$(store_repo_id "${REPO}")" "store=${REPO}/data/jetson_l4t"
+  run store_marker_validate "${MARKER}" "${REPO}"
+  assert_failure
+  assert_output --partial 'inside the repo'
+}
+
+@test "store_marker_validate rejects a symlinked image" {
+  _valid_loop_repo
+  : >"${BATS_TEST_TMPDIR}/real.img"
+  rm -f "${IMAGE}"; ln -s "${BATS_TEST_TMPDIR}/real.img" "${IMAGE}"
+  run store_marker_validate "${MARKER}" "${REPO}"
+  assert_failure
+  assert_output --partial 'symlink'
+}
+
+@test "store_marker_validate rejects a loop-image marker whose image is not a regular file" {
+  _valid_loop_repo
+  rm -f "${IMAGE}"; mkdir -p "${IMAGE}"
+  run store_marker_validate "${MARKER}" "${REPO}"
+  assert_failure
+  assert_output --partial 'regular file'
+}
+
+@test "store_marker_validate rejects a missing marker" {
+  _valid_loop_repo
+  rm -f "${MARKER}"
+  run store_marker_validate "${MARKER}" "${REPO}"
+  assert_failure
+}
