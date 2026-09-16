@@ -85,6 +85,24 @@ echo active
 EOF
   chmod +x "${STUB_BIN}/docker" "${STUB_BIN}/systemctl"
 
+  # Host NFS export (#101): exportfs is on PATH (the sudo stub only logs, so
+  # it is never really run); the "/srv bridge" is the data dir itself, with
+  # the three export dirs present; no host rpc.mountd unless MOUNTD=1; no
+  # readable export table.
+  cat >"${STUB_BIN}/exportfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'exportfs %s\n' "$*" >>"${CALLS}"
+EOF
+  cat >"${STUB_BIN}/pgrep" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == *rpc.mountd* && -n "${MOUNTD:-}" ]] && { echo 4242; exit 0; }
+exit 1
+EOF
+  chmod +x "${STUB_BIN}/exportfs" "${STUB_BIN}/pgrep"
+  export L4T_EXPORT_DIR="${L4T_REPO_ROOT}/data/jetson_l4t"
+  mkdir -p "${L4T_TREE}/rootfs" "${L4T_TREE}/tools/kernel_flash/images" "${L4T_TREE}/tools/kernel_flash/tmp"
+  export NFS_ETAB="${BATS_TEST_TMPDIR}/no-such-etab"
+
   REC='Bus 003 Device 049: ID 0955:7023 NVIDIA Corp. APX'
   BOOTED='Bus 002 Device 009: ID 0955:7020 NVIDIA Corp. L4T (Linux for Tegra) running on Tegra'
 }
@@ -383,7 +401,54 @@ EOF
 @test "flash validates sudo once before the NetworkManager guard (nm_flash_guard needs root)" {
   LSUSB_OUT="${REC}" run "${JETSON}" flash
   assert_success
-  run grep -v '^lsusb' "${CALLS}"
+  run grep -vE '^(lsusb|sudo exportfs)' "${CALLS}"
   assert_line --index 0 --regexp '^sudo (-n )?-v$'
   assert_line --index 1 'nm_flash_guard.sh auto'
+}
+
+# ── host NFS export (#101) ───────────────────────────────────────────
+
+@test "flash re-exports the L4T tree from the host NFS server after sudo and before the NM guard (#101)" {
+  # Every flash re-exports: a re-prepared images/ has a new file handle and
+  # the old export would give the board 'mount.nfs: Stale file handle'.
+  LSUSB_OUT="${REC}" run "${JETSON}" flash
+  assert_success
+  run grep -v '^lsusb' "${CALLS}"
+  assert_line --index 0 --regexp '^sudo (-n )?-v$'
+  assert_line --index 1 "sudo exportfs -u [fc00:1:1::/48]:${L4T_TREE}/rootfs"
+  assert_line --index 2 "sudo exportfs -o rw,nohide,insecure,no_subtree_check,async,no_root_squash [fc00:1:1::/48]:${L4T_TREE}/rootfs"
+  assert_line --index 4 --partial "[fc00:1:1::/48]:${L4T_TREE}/tools/kernel_flash/images"
+  assert_line --index 6 --partial "[fc00:1:1::/48]:${L4T_TREE}/tools/kernel_flash/tmp"
+  assert_line --index 7 'sudo exportfs -f'
+  assert_line --index 8 'nm_flash_guard.sh auto'
+  assert_line --index 9 'make run -- -t flash'
+}
+
+@test "flash stops before the NM guard when the host export fails (rootfs missing behind the bridge)" {
+  rm -rf "${L4T_TREE}/rootfs"
+  LSUSB_OUT="${REC}" run "${JETSON}" flash
+  assert_failure
+  assert_output --partial 'Error [host-config]'
+  run cat "${CALLS}"
+  refute_output --partial 'nm_flash_guard'
+  refute_output --partial 'make'
+}
+
+@test "status warns when a host rpc.mountd runs but the L4T tree is not exported — the #101 hang" {
+  printf 'hardware:\n  board: agx-orin\nstorage:\n  device: emmc\nuser:\n  password: s3cret\n' >"${L4T_REPO_ROOT}/jetson.yaml"
+  MOUNTD=1 LSUSB_OUT="${REC}" run "${JETSON}" status
+  assert_success
+  assert_output --partial '⚠'
+  assert_output --partial 'rpc.mountd'
+  assert_output --partial 'not exporting'
+  run cat "${CALLS}"
+  refute_output --partial 'sudo'   # status never escalates
+}
+
+@test "status is quiet about NFS when the host has no rpc.mountd (the container serves NFS itself)" {
+  printf 'hardware:\n  board: agx-orin\nstorage:\n  device: emmc\nuser:\n  password: s3cret\n' >"${L4T_REPO_ROOT}/jetson.yaml"
+  LSUSB_OUT="${REC}" run "${JETSON}" status
+  assert_success
+  refute_output --partial 'not exporting'
+  assert_output --partial 'container serves NFS'
 }
