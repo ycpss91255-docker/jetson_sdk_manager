@@ -114,9 +114,14 @@ _store_path_is_inside() {
 # or whose target is not what the backend expects. Diagnostics go to stderr.
 store_marker_validate() {
   local marker="$1" repo_root="$2"
-  local version backend repo_id want_id target
+  local version backend repo_id want_id target canon_repo
 
   [[ -f "${marker}" ]] || _store_reject "no marker at ${marker}" || return 1
+  # The marker is only trusted at its one canonical location; a copy
+  # elsewhere is not a marker.
+  canon_repo="$(readlink -f "${repo_root}")"
+  [[ "$(readlink -f "${marker}")" == "${canon_repo}/data/.l4t_store" ]] \
+    || _store_reject "marker must be ${canon_repo}/data/.l4t_store, not ${marker}" || return 1
 
   version="$(store_marker_read "${marker}" version)" \
     || _store_reject "missing version" || return 1
@@ -139,6 +144,10 @@ store_marker_validate() {
       [[ "${target}" == /* ]] || _store_reject "image path is not absolute: ${target}" || return 1
       [[ ! -L "${target}" ]] || _store_reject "image is a symlink: ${target}" || return 1
       [[ -f "${target}" ]] || _store_reject "image is not a regular file: ${target}" || return 1
+      # purge does `rm -f` on this path, so it may only ever be THE repo
+      # image — a marker naming any other file is not honoured.
+      [[ "$(readlink -f "${target}")" == "${canon_repo}/data/jetson_l4t.img" ]] \
+        || _store_reject "image must be ${canon_repo}/data/jetson_l4t.img, not ${target}" || return 1
       ;;
     directory-bind)
       target="$(store_marker_read "${marker}" store)" \

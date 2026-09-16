@@ -273,3 +273,31 @@ _valid_loop_repo() {
   run store_same_inode "${BATS_TEST_TMPDIR}/x" "${BATS_TEST_TMPDIR}/missing"
   assert_failure
 }
+
+# ── marker: target must be THE repo image / THE marker path (codex review) ─
+
+@test "store_marker_validate rejects a loop-image whose image is any other regular file" {
+  _valid_loop_repo
+  : >"${BATS_TEST_TMPDIR}/victim.bin"
+  store_marker_write "${MARKER}" backend=loop-image \
+    "repo_id=$(store_repo_id "${REPO}")" "image=${BATS_TEST_TMPDIR}/victim.bin"
+  run store_marker_validate "${MARKER}" "${REPO}"
+  assert_failure
+  assert_output --partial 'jetson_l4t.img'
+}
+
+@test "store_marker_validate accepts the repo image spelled through .. (canonical match)" {
+  _valid_loop_repo
+  store_marker_write "${MARKER}" backend=loop-image \
+    "repo_id=$(store_repo_id "${REPO}")" "image=${REPO}/data/../data/jetson_l4t.img"
+  run store_marker_validate "${MARKER}" "${REPO}"
+  assert_success
+}
+
+@test "store_marker_validate rejects a marker that is not <repo>/data/.l4t_store" {
+  _valid_loop_repo
+  cp "${MARKER}" "${BATS_TEST_TMPDIR}/elsewhere.marker"
+  run store_marker_validate "${BATS_TEST_TMPDIR}/elsewhere.marker" "${REPO}"
+  assert_failure
+  assert_output --partial '.l4t_store'
+}
