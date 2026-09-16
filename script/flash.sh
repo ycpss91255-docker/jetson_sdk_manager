@@ -28,6 +28,21 @@ _HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 _step() { printf '\n\033[36m[flash] %s\033[0m\n' "$1" >&2; }
 
+# _patch_initrd_boot_timeout <l4t_dir> <seconds>
+# Rewrite `maxcount=${timeout:-N}` in l4t_initrd_flash_internal.sh so the
+# wait for the initrd flash device is <seconds>. Idempotent: matches any
+# previous N. No-op when the script is absent (tests without a full tree).
+_patch_initrd_boot_timeout() {
+  local f="$1/tools/kernel_flash/l4t_initrd_flash_internal.sh" secs="$2"
+  [[ -f "${f}" ]] || return 0
+  if grep -q "maxcount=\${timeout:-${secs}}" "${f}"; then
+    printf '  initrd boot wait already %ss\n' "${secs}" >&2
+    return 0
+  fi
+  sudo sed -i -E "s/maxcount=\\$\{timeout:-[0-9]+\}/maxcount=\${timeout:-${secs}}/" "${f}"
+  printf '  patched initrd boot wait: %ss (NVIDIA default 120)\n' "${secs}" >&2
+}
+
 main() {
   _step "1/6 Validating /etc/jetson.yaml"
   local jp board storage_alias storage_device_path hw_target
@@ -125,6 +140,22 @@ main() {
   # in CI, so the actual write path is only exercised by a hardware flash.
   local l4t_dir
   l4t_dir=$(l4t_root_path "${jp}" "${hw_target}")
+  # How long l4t_initrd_flash waits for the board to come back as the
+  # initrd flash device after RCM boot. NVIDIA hard-codes 120 s
+  # (`maxcount=${timeout:-120}` in l4t_initrd_flash_internal.sh; the `-t`
+  # case in parse_param is dead code — not in getopts). An AGX Orin 64 GB
+  # devkit took ~3.5 min on real hardware and the host gave up first with
+  # "Device failed to boot to the initrd flash kernel". Patch the literal
+  # like _patch_skip_emmc_discard does (#47); idempotent.
+  local boot_timeout="${INITRD_FLASH_TIMEOUT:-600}"
+  if [[ ! "${boot_timeout}" =~ ^[0-9]+$ ]] || (( boot_timeout < 1 )); then
+    emit_error \
+      --category validate \
+      --detail "INITRD_FLASH_TIMEOUT must be a positive number of seconds, got: ${boot_timeout}" \
+      --action "unset it for the default (600), or e.g. INITRD_FLASH_TIMEOUT=900"
+    exit 1
+  fi
+  _patch_initrd_boot_timeout "${l4t_dir}" "${boot_timeout}"
   if [[ "${STORAGE_MODE}" == "internal" ]]; then
     (cd "${l4t_dir}" && sudo ./tools/kernel_flash/l4t_initrd_flash.sh \
       --flash-only \

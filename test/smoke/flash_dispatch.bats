@@ -397,3 +397,58 @@ EOF
   assert_output --partial 'gateway=192.168.1.1'
   assert_output --partial 'dns=8.8.8.8;1.1.1.1;'
 }
+
+# ── initrd boot timeout (#100) ───────────────────────────────────────
+# l4t_initrd_flash_internal.sh waits `maxcount=${timeout:-120}` seconds for
+# the board to come back as the initrd flash device; NVIDIA's `-t` is dead
+# code (not in getopts), so flash.sh patches the literal like #47 does for
+# the eMMC discard. An AGX Orin 64 GB took ~3.5 min on real hardware.
+
+_write_initrd_internal() {
+  cat >"${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash_internal.sh" <<'EOF'
+#!/bin/bash
+wait_for_booting() {
+	maxcount=${timeout:-120}
+	count=0
+}
+EOF
+}
+
+@test "flash patches the initrd boot wait to 600 s by default (no -t: NVIDIA ignores it)" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  _write_initrd_internal
+  yq -i '.phases |= (. + ["images"] | unique)' "${L4T_DIR}/.prepared.yaml"
+  run "${SCRIPT_DIR}/flash.sh"
+  assert_success
+  run grep -c 'maxcount=${timeout:-600}' "${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash_internal.sh"
+  assert_output '1'
+  run cat "${ARGV_LOG}"
+  refute_output --partial '-t '
+}
+
+@test "flash honours INITRD_FLASH_TIMEOUT for the patched wait and is idempotent" {
+  _write_jetson_yaml "storage:
+  device: nvme"
+  _write_initrd_internal
+  yq -i '.phases |= (. + ["images"] | unique)' "${L4T_DIR}/.prepared.yaml"
+  INITRD_FLASH_TIMEOUT=900 run "${SCRIPT_DIR}/flash.sh"
+  assert_success
+  INITRD_FLASH_TIMEOUT=900 run "${SCRIPT_DIR}/flash.sh"
+  assert_success
+  run grep -c 'maxcount=${timeout:-900}' "${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash_internal.sh"
+  assert_output '1'
+  run grep -c 'maxcount=' "${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash_internal.sh"
+  assert_output '1'
+}
+
+@test "flash rejects a non-numeric INITRD_FLASH_TIMEOUT before touching the board" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  _write_initrd_internal
+  yq -i '.phases |= (. + ["images"] | unique)' "${L4T_DIR}/.prepared.yaml"
+  INITRD_FLASH_TIMEOUT=soon run "${SCRIPT_DIR}/flash.sh"
+  assert_failure
+  assert_output --partial 'INITRD_FLASH_TIMEOUT'
+  [[ ! -s "${ARGV_LOG}" ]]
+}
