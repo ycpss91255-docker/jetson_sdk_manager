@@ -155,10 +155,16 @@ EOF
   assert_success
   run cat "${ARGV_LOG}"
   assert_output --partial '--no-flash'
-  assert_output --partial '--external-only'
+  # No --external-only: images for BOTH the internal QSPI boot chain
+  # (-p flash_t234_qspi.xml) and the external rootfs must be generated,
+  # because flash.sh flashes both. With --external-only the on-device
+  # flash dies with '/mnt/internal/flash.idx is not found' (HITL, AGX Orin
+  # NVMe, 2026-09-16).
+  refute_output --partial '--external-only'
   assert_output --partial '--external-device'
   assert_output --partial 'nvme0n1p1'
   assert_output --partial 'flash_l4t_external.xml'
+  assert_output --partial 'flash_t234_qspi.xml'
   # Exact-line match: 'external' is the positional mode arg, not a substring
   # of some flag — guards against a regression that drops the positional.
   run grep -Fxq external "${ARGV_LOG}"
@@ -329,7 +335,7 @@ EOF
   assert_success
   # images phase was dropped and regenerated under the external dispatch...
   run cat "${ARGV_LOG}"
-  assert_output --partial '--external-only'
+  assert_output --partial '--external-device'
   # ...and the marker now records the new mode.
   run yq -r '.storage_mode' "${L4T_DIR}/.prepared.yaml"
   assert_output 'external'

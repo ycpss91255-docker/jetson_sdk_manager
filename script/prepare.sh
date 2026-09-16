@@ -223,10 +223,15 @@ main() {
         "${hw_target}" \
         internal)
     else
+      # No --external-only: flash.sh flashes BOTH the internal boot chain
+      # (limited to QSPI by -p flash_t234_qspi.xml, so eMMC is untouched)
+      # and the external rootfs, so images for both must exist — with
+      # --external-only the on-device flash dies with
+      # '/mnt/internal/flash.idx is not found' (HITL, AGX Orin NVMe). It
+      # also keeps the QSPI firmware at the same L4T release as the rootfs.
       (cd "${l4t_dir}" && sudo ./tools/kernel_flash/l4t_initrd_flash.sh \
         --no-flash \
         --external-device "${STORAGE_DEVICE}" \
-        --external-only \
         -c ./tools/kernel_flash/flash_l4t_external.xml \
         -p '-c bootloader/generic/cfg/flash_t234_qspi.xml' \
         --network usb0 \
