@@ -261,7 +261,7 @@ cd .. && rm -rf jetson_sdk_manager
 
 **不要**在 `./data/jetson_l4t` 還掛著時 `rm -rf` checkout：`rm` 會穿過 mount 往下刪（store 內容被刪掉——這倒是你要的），然後卡在 mountpoint 本身，留下一個 loop device 綁著已 unlink 的映像檔直到你 `umount`。先跑 `purge`（至少 `host_teardown.sh`）。另外 `/srv/jetson_l4t` 是固定路徑，同一台 host 上不能同時 set up 兩個 checkout。
 
-Docker image（`make build` 的產物）是唯一在 checkout 之外的東西；要一併清掉就 `docker rmi`。
+「全部在 checkout 內」有兩個刻意的例外：Docker image（`make build` 的產物，要清就 `docker rmi`），以及你用 `L4T_STORE_DIR` 明確放在別處的 store。後者 `purge` 會用同一個 alpine 流程清空內容,然後只 `rmdir` 那個空目錄——絕不會對 marker 裡讀到的路徑 `rm -rf`——所以若目錄裡被放了其他東西，purge 會停下並告訴你。
 
 ## SDK Manager（cli / gui）
 

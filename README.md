@@ -259,7 +259,7 @@ After `purge`, `rm -rf` of the checkout leaves **no residue**: no mount, no loop
 
 Do **not** `rm -rf` the checkout while `./data/jetson_l4t` is still mounted: `rm` recurses *through* the mount (deleting the store's contents, which is what you wanted) and then fails on the mountpoint itself, leaving a loop device attached to an unlinked image until you `umount`. Run `purge` (or at least `host_teardown.sh`) first. Also note `/srv/jetson_l4t` is one fixed path, so two checkouts cannot be set up on the same host at the same time.
 
-Docker images (`make build` output) are the one thing outside the checkout; remove them with `docker rmi` if you want them gone too.
+Two deliberate exceptions to "everything under the checkout": Docker images (`make build` output — `docker rmi` if you want them gone), and a store you explicitly placed elsewhere with `L4T_STORE_DIR`. For the latter, `purge` empties it through the same alpine pass and then only `rmdir`s the empty directory — it never `rm -rf`s a path read from the marker — so if anything else was put in that directory, purge stops and tells you.
 
 ## SDK Manager (cli / gui)
 
