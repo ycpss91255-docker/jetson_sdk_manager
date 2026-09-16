@@ -100,6 +100,7 @@ Done with the host? `./jetson teardown` undoes the kernel / mount changes in thi
 - **`./data/jetson_l4t/` must be ext4 / xfs / btrfs** — `apply_binaries.sh` writes setuid + root-owned files that NTFS / exFAT / FAT silently drop, producing a Jetson whose `sudo` is broken. You do not have to move the repo: on such a checkout `./jetson prepare` (via `host_setup.sh`) creates a sparse ext4 image **inside the repo** (`data/jetson_l4t.img`, `L4T_STORE_SIZE=40G` logical) and loop-mounts it over `data/jetson_l4t/`. Needs `e2fsprogs` + `util-linux` (`mkfs.ext4`, `losetup`). Prefer a directory on another ext4 disk? `L4T_STORE_DIR=/path/on/ext4 ./jetson prepare`. The loop path is slower than a native ext4 checkout, mostly during rootfs extraction.
 - **Per boot**: `./jetson prepare` re-runs `host_setup.sh` (QEMU binfmt, `nfsd`, USB autosuspend / buffer, the `/srv/jetson_l4t` bridge, the data store mount). Nothing persists across reboots; `./jetson status` tells you when it is needed again.
 - **NetworkManager hosts** (most desktops/laptops): NM tears the USB link down mid-flash unless guarded. `./jetson flash` runs `nm_flash_guard.sh auto` for you; only skip it if you know the host does not run NM.
+- **USB 3 ports**: the flash initrd only needs USB 2, but its gadget also tries a SuperSpeed link, and on some hosts that link never trains and its retries tear the working link down every few seconds (`Waiting for target to boot-up...` until timeout). `./jetson flash` runs `usb_ss_guard.sh auto` for you: it disables the SuperSpeed half of the Jetson's connector (sysfs, boot-scoped) and re-enables it when the board boots. Details + the manual fallback: [doc/TROUBLESHOOTING.md](doc/TROUBLESHOOTING.md#flash-waits-in-waiting-for-target-to-boot-up-while-dmesg-loops-cannot-enable-maybe-the-usb-cable-is-bad).
 
 ## Configure `jetson.yaml`
 
@@ -185,6 +186,7 @@ Two deliberate exceptions to "everything under the checkout": Docker images (`ma
 - *Could not detect a board* / Jetson not in recovery
 - `RPC: Program not registered` / *NFS server is not running* / `Error 114` (at the start of flash)
 - Flash stalls mid-transfer / "Flashing – 99 %" / `mount.nfs: No such file or directory` (NetworkManager)
+- Flash waits in *Waiting for target to boot-up...* while `dmesg` loops *Cannot enable. Maybe the USB cable is bad?* (SuperSpeed half of the connector)
 - `ERROR: might be timeout in USB write` / `Return value 3`
 - `Error opening /dev/sda: No medium found` (microSD via USB reader) · flash hangs on the APP partition
 - SDK Manager: *Device mode forwarding host setup failed* · GUI component install hangs
