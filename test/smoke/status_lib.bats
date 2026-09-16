@@ -49,6 +49,7 @@ EOF
   USBCORE_PARAMS="${BATS_TEST_TMPDIR}/usbcore"; mkdir -p "${USBCORE_PARAMS}"; export USBCORE_PARAMS
   printf -- '-1\n' >"${USBCORE_PARAMS}/autosuspend"; printf '2048\n' >"${USBCORE_PARAMS}/usbfs_memory_mb"
   NFSD_SYSFS="${BATS_TEST_TMPDIR}/sys-module-nfsd"; export NFSD_SYSFS
+  USB_SS_GUARD_STATE="${BATS_TEST_TMPDIR}/usb-ss-guard.state"; export USB_SS_GUARD_STATE
 }
 
 _level() { cut -f1; }
@@ -153,6 +154,22 @@ _level() { cut -f1; }
   assert_output --partial 'nfsd'
   assert_output --partial $'warn\t'
   assert_output --partial 'autosuspend'
+}
+
+# ── USB SuperSpeed guard (#100) ──────────────────────────────────────
+
+@test "status_usb_ss_guard: no state file → ok (nothing disabled)" {
+  run status_usb_ss_guard
+  assert_output --partial $'ok\t'
+  assert_output --partial 'SuperSpeed'
+}
+
+@test "status_usb_ss_guard: state file present → warn naming the port and the enable command" {
+  printf '/sys/bus/usb/devices/2-0:1.0/usb2-port3\n' >"${USB_SS_GUARD_STATE}"
+  run status_usb_ss_guard
+  assert_output --partial $'warn\t'
+  assert_output --partial 'usb2-port3'
+  assert_output --partial 'usb_ss_guard.sh enable'
 }
 
 # ── config ───────────────────────────────────────────────────────────
