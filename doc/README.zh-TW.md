@@ -77,7 +77,7 @@ Jetson 的 Boot ROM 只在 **Force Recovery**(「REC」/「APX」/「RCM」都�
 | `0955:7020 … L4T (Linux for Tegra) running on Tegra` | 已開機進 OS——重做一次 |
 | 沒有 | 沒偵測到——換線 / 換孔 / 不經 hub;確認線接在按鍵旁邊那個孔 |
 
-Recovery 走 USB 2.0,是正常的。板子會一直停在 recovery 直到斷電,所以在 `./jetson prepare` 前進一次就放著。若某一步以 `ERROR: might be timeout in USB write` 結束,先把板子完整斷電、重新進 recovery 再跑一次(prepare 會從停下的地方續跑)——這能清掉最常見的原因:上次中斷嘗試留下的 Boot ROM USB 狀態。若仍發生:改接主機本體 USB 孔、換線,再用 `./jetson status` 檢查 host 的 USB 設定。官方照片與完整按鍵說明見 NVIDIA [Jetson AGX Orin Developer Kit User Guide](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) 與 [Jetson Linux Quick Start](https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/IN/QuickStart.html)(「To Flash the Jetson Developer Kit Operating Software」—「force recovery mode」)。
+Recovery 走 USB 2.0,是正常的。板子會一直停在 recovery 直到斷電,所以在 `./jetson prepare` 前進一次就放著。若某一步以 `ERROR: might be timeout in USB write` 結束,先把板子完整斷電、重新進 recovery 再跑一次(prepare 會從停下的地方續跑)——可能的原因之一是上次中斷嘗試留下的 Boot ROM USB 狀態,重新上電就能清掉。若仍發生:改接主機本體 USB 孔、換線,再用 `./jetson status` 檢查 host 的 USB 設定。官方照片與完整按鍵說明見 NVIDIA [Jetson AGX Orin Developer Kit User Guide](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) 與 [Jetson Linux Quick Start](https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/IN/QuickStart.html)(「To Flash the Jetson Developer Kit Operating Software」—「force recovery mode」)。
 
 ## 燒錄之後
 

@@ -95,7 +95,7 @@ make run -- -t prepare && ./script/nm_flash_guard.sh auto && make run -- -t flas
 
   **2 種類の「Error 114」原因 — 混同しないこと。** (a) **`flash` のごく開始時点**で、`RPC: Program not registered` / `NFS server is not running` を伴う `Error 114` は、host の `nfsd` モジュールがロードされていないことを意味します — `host_setup.sh`（または `sudo modprobe nfsd`）で修正。 (b) **転送の途中**で、`Error 114` / `NFS server` 失敗として現れる停止は、ほぼ常に `nfsd` ではなく **NetworkManager** が USB リンクを破壊しているのが原因です — `./script/nm_flash_guard.sh auto` で修正。対応する 2 つの [トラブルシューティング](#トラブルシューティング) 項目を参照。
 - **NetworkManager の host では `./script/nm_flash_guard.sh auto` — 事実上必須。** ほとんどのラップトップ / デスクトップは NetworkManager を実行しており、これが Jetson の USB gadget インターフェースを DHCP プローブしてフラッシュの途中でリンクを破壊します。`make run -- -t flash` の前に `nm_flash_guard.sh auto` を実行してください；これはフラッシュの間そのインターフェースを unmanaged にマークし、ボード起動時に NM を自動復元します。host が NetworkManager を実行していないことを確認している場合のみスキップしてください。
-- **Jetson が APX recovery (REC) に入っていること**（`flash` stage のみ；`prepare` は Jetson 接続不要）。
+- **Jetson が APX recovery (REC) に入っていること** — `prepare` と `flash` の両方で必要:`prepare` の最終ステップは USB 経由でボードの BOARDID/FAB/BOARDSKU/BOARDREV を読み取ります(これらを自分で export する場合は `./jetson prepare --no-board`)。
 
 ## `jetson.yaml` の設定
 

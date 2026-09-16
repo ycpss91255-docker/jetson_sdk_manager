@@ -138,7 +138,7 @@ ERROR: might be timeout in USB write.
 Error: Return value 3
 ```
 
-The usual cause is Boot ROM USB state left over from a previous interrupted attempt (#10), which only a **hardware** power cycle clears — power off, hold REC, reconnect power, release (`tegrarcm_v2 --reboot recovery` is not enough) — then re-run the same command; prepare resumes where it stopped. If it persists after a clean power cycle, work through the USB path: a direct host port, another cable, host USB settings (`./jetson status` checks autosuspend / usbfs buffer). In the setup reported in #48, switching between a hub and a direct port did not change the result, so try the power cycle first.
+One possible cause is Boot ROM USB state left over from a previous interrupted attempt (#10); a **hardware** power cycle clears that — power off, hold REC, reconnect power, release (`tegrarcm_v2 --reboot recovery` is not enough) — so do it first, then re-run the same command; prepare resumes where it stopped. If it persists after a clean power cycle, work through the USB path: a direct host port, another cable, host USB settings (`./jetson status` checks autosuspend / usbfs buffer). In the setup reported in #48, switching between a hub and a direct port did not change the result, so try the power cycle first.
 
 Also confirm `./script/host_setup.sh` ran this boot — it raises the USB buffer and disables autosuspend (see [README → Prerequisites](../README.md#prerequisites)).
 

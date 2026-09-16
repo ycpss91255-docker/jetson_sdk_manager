@@ -93,7 +93,7 @@ make run -- -t prepare && ./script/nm_flash_guard.sh auto && make run -- -t flas
 
   **两种不同的「Error 114」成因 —— 不要混淆。** (a) **在 `flash` 一开始**，`Error 114` 伴随 `RPC: Program not registered` / `NFS server is not running`，表示 host 的 `nfsd` 模块没载入 —— 用 `host_setup.sh`（或 `sudo modprobe nfsd`）修复。(b) **在传输进行到一半**，以 `Error 114` / `NFS server` 失败形式出现的卡死，几乎总是 **NetworkManager** 把 USB 链路拆掉，而不是 `nfsd` —— 用 `./script/nm_flash_guard.sh auto` 修复。见 [疑难排解](#疑难排解) 中两条对应条目。
 - **NetworkManager host 上的 `./script/nm_flash_guard.sh auto` —— 实际上是必须的。** 多数笔电 / 桌机跑 NetworkManager，它会对 Jetson 的 USB gadget 接口做 DHCP 探测并在烧录途中拆掉链路。在 `make run -- -t flash` 前跑 `nm_flash_guard.sh auto`；它会在本次 flash 期间把接口标记为 unmanaged，并在板子开机后自动恢复 NM。只有在你已确认 host 不跑 NetworkManager 时才可跳过。
-- **Jetson 进入 APX recovery（REC）**（仅 `flash` 阶段需要；`prepare` 不需连 Jetson）。
+- **Jetson 进入 APX recovery（REC）**——`prepare` 与 `flash` 都需要：`prepare` 的最后一步通过 USB 读取板子的 BOARDID/FAB/BOARDSKU/BOARDREV(自行 export 这四个变量时可用 `./jetson prepare --no-board`)。
 
 ## 配置 `jetson.yaml`
 
