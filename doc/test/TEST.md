@@ -8,6 +8,19 @@
 |------|-------------|
 | `entrypoint.sh exists and is executable` | Entrypoint check |
 
+## Test levels (ISTQB) for the L4T data-store lifecycle (#93)
+
+The store lifecycle (`host_setup.sh` step 0 → `host_teardown.sh` → `clean.sh purge`, all on `script/lib/store.sh`) is the one feature with all four levels wired up. Use it as the template for the next one.
+
+| Level | Where | What it proves | Runs in |
+|---|---|---|---|
+| **Unit** | `test/smoke/store_lib.bats` | `store.sh` functions in isolation: backend matrix (fstype / `L4T_STORE_DIR` / `L4T_STORE_BACKEND`), marker write is atomic + round-trips, `store_marker_validate` refuses foreign `repo_id`, unknown backend / version, relative or symlinked paths, `/`, `$HOME`, in-repo stores; size parsing (M/G, 20G floor, never shrink); device+inode identity. | `devel-test` stage (`make build test`) |
+| **Integration** | `test/smoke/host_setup.bats`, `host_teardown.bats`, `clean_targets.bats` | The three CLIs drive the right tools in the right order, with `mount` / `mkfs.ext4` / `chown` / `docker` / `host_teardown.sh` stubbed on PATH: first run creates + formats + loop-mounts + writes the marker; re-run neither re-formats nor re-mounts; missing `mkfs.ext4` aborts before creating anything; `/srv` bound elsewhere fails safely; teardown unmounts `/srv` then the store and `rmdir`s only an empty `/srv`; `purge` = `all` + teardown + delete, `--keep-downloads`, idempotent, refuses a foreign / malformed marker without deleting. | `devel-test` stage |
+| **System** | `test/system/store_loop_system.sh` | The kernel does what the scripts promise: a real `sudo mount -o loop` of an in-repo ext4 image, setuid + root ownership survive on it, `/srv/jetson_l4t` and the store root share device+inode, teardown detaches the loop device and the image re-mounts with its data. | `store-loop-system` CI job (ubuntu-latest, sudo). Skips with a reason if the runner lacks sudo / loop. |
+| **Acceptance** | same script, final sections | The README's user-facing contract: after `clean.sh purge`, image + marker + tarballs are gone, no mount or loop device references the clone, `purge` again exits 0, and `rm -rf <clone>` succeeds; `purge --keep-downloads` keeps the tarballs. | `store-loop-system` CI job |
+
+**HITL-only for this feature:** the system job forces `L4T_STORE_BACKEND=loop-image` on an ext4 runner. It proves the loop lifecycle, not ntfs-3g behaviour — sparse-file allocation and prepare throughput through ext4 → loop → FUSE → NTFS can only be observed on a real NTFS checkout.
+
 ## What CI actually proves
 
 CI is build-and-lint plus a tiny smoke suite. It runs on GitHub-hosted x86_64 runners with **no Jetson attached**, so nothing below the line "real flash" is exercised:
@@ -15,6 +28,7 @@ CI is build-and-lint plus a tiny smoke suite. It runs on GitHub-hosted x86_64 ru
 - Image build for every Dockerfile stage.
 - `shellcheck` + `hadolint` lint.
 - The `bats` smoke suite (this file).
+- The `store-loop-system` job: a real loop-mounted ext4 store on the runner (see the test-levels table above).
 - `sdkmanager --ver` (the `cli-test` / `gui-test` stages).
 
 CI does **NOT** flash a board, serve NFS to a device, or write eMMC / NVMe / USB / SD. Treat green CI as "it builds and the scripts are well-formed", not "it flashes".

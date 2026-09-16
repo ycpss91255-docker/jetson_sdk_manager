@@ -34,6 +34,7 @@
 - [兩條燒錄路徑](#兩條燒錄路徑)
 - [Stages](#stages)
 - [Clean 指令](#clean-指令)
+- [移除 repo](#移除-repo)
 - [SDK Manager（cli / gui）](#sdk-managercli--gui)
 - [持久化資料](#持久化資料)
 - [架構](#架構)
@@ -47,7 +48,7 @@
 
 > **首次燒錄的預期條件（請先讀一次）：**
 > - **Host**：一台 x86_64 **Linux** 機器（不是 Mac 上的 VM，flash 階段也不能用 WSL）。
-> - **Data dir 檔案系統**：`./data/jetson_l4t/` 必須位於 **ext4 / xfs / btrfs** 上。在 repo 根目錄用 `df -T .` 確認；若 `Type` 是 `ntfs` / `exfat` / `fuseblk` / `vfat`，見 [前置需求](#前置需求) 的 bind-mount 修正。
+> - **Data dir 檔案系統**：`./data/jetson_l4t/` 必須是 **ext4 / xfs / btrfs**。若 repo 在 NTFS / exFAT 上（`df -T .` 顯示 `fuseblk` / `ntfs` / `exfat` / `vfat`），`host_setup.sh` 會自動處理：在 **repo 內**建立一個 ext4 映像檔（`data/jetson_l4t.img`）並 loop-mount 上去——不會有任何東西落在 checkout 之外。見 [前置需求](#前置需求)。
 > - **一條 USB-C 線**，接在 host 與 Jetson 前面板的 port 之間。
 > - **時間**：端到端大約 **40 分鐘**（`prepare` 約 30 分鐘 + `flash` 約 10 分鐘），外加一次性的 BSP 下載。
 >
@@ -83,8 +84,8 @@ make run -- -t prepare && ./script/nm_flash_guard.sh auto && make run -- -t flas
 
 - **Host OS**：x86_64 Linux。
 - **Docker Engine** >= v20.10.6。
-- **Repo 所在的 host 檔案系統須為 ext4 / xfs / btrfs。** `apply_binaries.sh` 會在 rootfs 樹中產生 setuid binary（`sudo`）和 root 擁有的檔案。NTFS / exFAT / `fuseblk` / FAT 會在解壓時靜默丟掉 setuid 與 ownership，燒錄完成的 Jetson 開機後 `sudo` 拒絕啟動。`prepare.sh` 偵測到路徑落在這些檔案系統上會以 action 訊息中止；請先將 repo 移到別處（或 bind-mount 一個 ext4 目錄覆蓋 `./data/jetson_l4t/`）再重跑。
-- **每次開機的 host 設定 — `./script/host_setup.sh`。** 在連接 Jetson 前於 host 上執行。一條指令會註冊 **QEMU binfmt**(`prepare` 跑 BSP 的 ARM64 工具)、載入 **`nfsd`** 模組(`flash` 透過本地 NFS export 把 payload 餵給 Jetson 的 initrd —— 無 `iptables` / `usb-gadget` forwarding)、關閉 **USB autosuspend**、把 **`usbfs` buffer** 拉到 2048 MB(後兩者避免 `tegrarcm_v2` / NFS bulk write 燒到一半卡住)、並**把燒錄 export 路徑 `/srv/jetson_l4t` 橋接進 host mount namespace**(kernel `nfsd` 從 host namespace 提供此 export,而僅存在於容器內的 bind mount 在那裡原本不可見)。這些重開機後都會重置,所以每次開機要再跑一次。兩件它**不會**幫你做的:
+- **`./data/jetson_l4t/` 必須是 ext4 / xfs / btrfs。** `apply_binaries.sh` 會在 rootfs 樹中產生 setuid binary（`sudo`）和 root 擁有的檔案。NTFS / exFAT / `fuseblk` / FAT 會在解壓時靜默丟掉 setuid 與 ownership，燒錄完成的 Jetson 開機後 `sudo` 拒絕啟動。你**不必**搬 repo：在這類 checkout 上 `./script/host_setup.sh`（step 0）會建立一個 sparse ext4 映像檔 `data/jetson_l4t.img`（預設 `L4T_STORE_SIZE=40G`，是邏輯大小，會隨使用長大，請確保實際約 20 GB 可用），loop-mount 到 `./data/jetson_l4t/`，並把做了什麼記在 `data/.l4t_store`。所有東西都留在 repo 資料夾內；`./script/host_teardown.sh` 負責卸載、`./script/clean.sh purge` 負責刪除。Host 需要 `e2fsprogs` + `util-linux`（`mkfs.ext4`、`losetup`）。想改用另一顆 ext4 碟上的目錄？設 `L4T_STORE_DIR=/path/on/ext4`，同一組腳本會改用 bind-mount / 卸載 / 移除它。`prepare.sh` 仍會在發現自己落在非 unix 檔案系統時中止，所以漏跑 step 0 會很快失敗。注意 loop 路徑（ext4 → loop → FUSE → NTFS）比原生 ext4 checkout 慢，主要在 rootfs 解壓階段。
+- **每次開機的 host 設定 — `./script/host_setup.sh`。** 在連接 Jetson 前於 host 上執行。一條指令會**建立 / 重新掛載 L4T data store**（step 0，見上一點；原生 ext4 checkout 上是 no-op）、註冊 **QEMU binfmt**(`prepare` 跑 BSP 的 ARM64 工具)、載入 **`nfsd`** 模組(`flash` 透過本地 NFS export 把 payload 餵給 Jetson 的 initrd —— 無 `iptables` / `usb-gadget` forwarding)、關閉 **USB autosuspend**、把 **`usbfs` buffer** 拉到 2048 MB(後兩者避免 `tegrarcm_v2` / NFS bulk write 燒到一半卡住)、並**把燒錄 export 路徑 `/srv/jetson_l4t` 橋接進 host mount namespace**(kernel `nfsd` 從 host namespace 提供此 export,而僅存在於容器內的 bind mount 在那裡原本不可見)。這些重開機後都會重置,所以每次開機要再跑一次。兩件它**不會**幫你做的:
   - **持久化 `nfsd`**(下次開機免再載):`echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`。
   - **per-device autosuspend 覆寫**,若某個 port 仍把裝置 park(Jetson 進 APX 後用 `lsusb -t` 找路徑):`echo on | sudo tee /sys/bus/usb/devices/<bus>-<port>/power/control`。
 
@@ -243,8 +244,24 @@ Host 端會自動在 USB 網路介面配上 `192.168.55.x`（用 `ip a` 確認�
 | `./script/clean.sh rootfs` | 只移除 `rootfs/`，保留 BSP 與已下載的 tarball。 |
 | `./script/clean.sh l4t` | 移除整個 `Linux_for_Tegra/` 樹（BSP + rootfs + image）。保留 tarball。 |
 | `./script/clean.sh all` | l4t + 移除 `data/downloads/` tarball。 |
+| `./script/clean.sh purge` | `all` + `host_teardown.sh` + 刪除 L4T data store 本體（repo 內的 `data/jetson_l4t.img`，或 `L4T_STORE_DIR` 目錄）及其 `data/.l4t_store` marker。最強的清除——見 [移除 repo](#移除-repo)。加 `--keep-downloads` 可保留 tarball，下次 prepare 省掉約 3 GB 下載。 |
 
-當 `prepare.sh` 報 JetPack 版本 mismatch 時，執行 `./script/clean.sh l4t` 重置。
+當 `prepare.sh` 報 JetPack 版本 mismatch 時，執行 `./script/clean.sh l4t` 重置。`purge` 在動手前會先驗證 marker：來自別的 checkout、格式不對、或它不認得的 store 路徑，都會印出診斷並中止，什麼都不刪。
+
+## 移除 repo
+
+這個 repo 產生的東西都在 checkout 底下（`data/`、`log/`、衍生的 `.env` / `compose.yaml`）——host 上只有兩類「開機期」例外：`host_setup.sh` 建立的 mount（NTFS checkout 的 `./data/jetson_l4t`，以及 `/srv/jetson_l4t` NFS 橋接）和 kernel 的 USB / nfsd 設定。重開機就消失，或用 `host_teardown.sh` 立刻還原。所以契約是：
+
+```bash
+./script/clean.sh purge      # 卸載 + 刪除 store、tarball、marker（加 --keep-downloads 保留 tarball）
+cd .. && rm -rf jetson_sdk_manager
+```
+
+`purge` 之後 `rm -rf` checkout **零殘留**：沒有 mount、沒有 loop device、沒有 `/srv/jetson_l4t`，`/var/lib` 或家目錄裡也沒有任何東西。CI 的 `store-loop-system` job 會驗證這點（在 runner 上真的 loop mount，然後 `rm -rf` 一個拋棄式 clone）。
+
+**不要**在 `./data/jetson_l4t` 還掛著時 `rm -rf` checkout：`rm` 會穿過 mount 往下刪（store 內容被刪掉——這倒是你要的），然後卡在 mountpoint 本身，留下一個 loop device 綁著已 unlink 的映像檔直到你 `umount`。先跑 `purge`（至少 `host_teardown.sh`）。另外 `/srv/jetson_l4t` 是固定路徑，同一台 host 上不能同時 set up 兩個 checkout。
+
+Docker image（`make build` 的產物）是唯一在 checkout 之外的東西；要一併清掉就 `docker rmi`。
 
 ## SDK Manager（cli / gui）
 
@@ -265,7 +282,7 @@ GUI 模式需要 host 上的 X11 session；base template 會自動偵測 `$DISPL
 
 | Host 路徑 | 容器路徑 | 用途 |
 |---|---|---|
-| `./data/jetson_l4t/` | `/srv/jetson_l4t` | BSP + rootfs + 產生的燒錄 image（工廠燒錄流程）。**必須是 ext4 / xfs / btrfs。** |
+| `./data/jetson_l4t/` | `/srv/jetson_l4t` | BSP + rootfs + 產生的燒錄 image（工廠燒錄流程）。**必須是 ext4 / xfs / btrfs**——NTFS / exFAT checkout 上由 `host_setup.sh` 把 `./data/jetson_l4t.img` loop-mount 到這裡（marker：`./data/.l4t_store`）。 |
 | `./data/downloads/` | `${HOME}/Downloads/nvidia/sdkm_downloads` | 快取的 tarball（BSP + sample rootfs），與 SDK Manager 共用。 |
 | `./data/nvsdkm/` | `${HOME}/.nvsdkm` | SDK Manager 登入 session 快取 + 它的 SSH 私鑰。僅 `cli` / `gui` stage。**須為 ext4 / xfs / btrfs** —— 非 unix FS 會把私鑰強制成 0777,ssh 拒用,卡住 on-device 安裝。 |
 | `./data/nvidia_sdk/` | `${HOME}/nvidia/nvidia_sdk` | SDK Manager 管理的 SDK 安裝目錄(解壓的 setuid rootfs)。僅 `cli` / `gui` stage。**須為 ext4 / xfs / btrfs。** |
@@ -320,6 +337,8 @@ jetson_sdk_manager/
 ├── .base/                       # 共用模板（git subtree）
 ├── data/                        # 持久化狀態（gitignored）
 │   ├── jetson_l4t/              #   BSP + rootfs + 燒錄 image
+│   ├── jetson_l4t.img           #   loop-mount 到 jetson_l4t/ 的 ext4 映像檔（僅 NTFS checkout）
+│   ├── .l4t_store               #   store marker：backend / repo_id / 映像檔路徑
 │   ├── downloads/               #   BSP / rootfs tarball
 │   ├── nvsdkm/                  #   SDK Manager 登入 session（cli/gui）
 │   └── nvidia_sdk/              #   SDK Manager 安裝目錄（cli/gui）
@@ -343,8 +362,9 @@ jetson_sdk_manager/
 │   ├── flash.sh                 # 階段 2 entrypoint
 │   ├── clean.sh                 # Volume 清理指令
 │   ├── gui-entrypoint.sh        # SDK Manager GUI 啟動器 + best-effort banner
-│   ├── lib/                     # yaml / download / volume / errors helpers
-│   ├── host_setup.sh            # 一次性 per-boot host 前置(qemu/nfsd/USB)
+│   ├── lib/                     # yaml / download / volume / store / errors helpers
+│   ├── host_setup.sh            # 一次性 per-boot host 前置(store/qemu/nfsd/USB)
+│   ├── host_teardown.sh         # 同一次開機內還原 host_setup.sh
 │   ├── init_data_dirs.sh        # 首次以非 root 建立 data/
 │   ├── entrypoint.sh            # 容器 entrypoint（logging tee）
 │   ├── build.sh -> ../.base/script/docker/wrapper/build.sh
@@ -363,21 +383,23 @@ jetson_sdk_manager/
 
 ### `prepare.sh` 中止：「L4T_ROOT ... is on ntfs/exfat/fuseblk」
 
-`apply_binaries.sh` 會產生 setuid binary（`sudo`）和 root 擁有的檔案。NTFS / exFAT / `fuseblk` / FAT 會靜默丟掉這兩者，產生的 Jetson 開機後 `sudo` 拒絕啟動。請將 repo 移到 ext4 / xfs / btrfs 分割區，或 bind-mount 一個 ext4 目錄覆蓋 `./data/jetson_l4t/`：
+`apply_binaries.sh` 會產生 setuid binary（`sudo`）和 root 擁有的檔案。NTFS / exFAT / `fuseblk` / FAT 會靜默丟掉這兩者，產生的 Jetson 開機後 `sudo` 拒絕啟動。這個中止代表 `./data/jetson_l4t/` 在這類檔案系統上**而且沒有被掛載**——也就是這次開機還沒跑 `./script/host_setup.sh`。跑它；step 0 會建立（第一次）或重新掛載 repo 內的 ext4 映像檔：
 
 ```bash
-sudo mkdir -p /var/lib/jetson_l4t
-sudo mount --bind /var/lib/jetson_l4t ./data/jetson_l4t
+./script/host_setup.sh           # step 0：data/jetson_l4t.img → loop-mount 到 data/jetson_l4t
+findmnt ./data/jetson_l4t        # 應顯示 FSTYPE ext4、SOURCE /dev/loopN
+make run -- -t prepare
 ```
 
-Bind-mount target 不必在系統碟上 — 任何 ext4 / xfs / btrfs 分割區內的目錄都可以，包含第二顆 SSD 或已掛載的資料碟。選一個剩餘空間夠的（一次完整 prepare 約需 15 GB）：
+可調參數（`host_setup.sh` 的環境變數）：
 
-```bash
-sudo mkdir -p /media/<ext4-mount>/jetson_l4t
-sudo mount --bind /media/<ext4-mount>/jetson_l4t ./data/jetson_l4t
-```
+| 變數 | 預設 | 效果 |
+|---|---|---|
+| `L4T_STORE_SIZE` | `40G` | sparse 映像檔的邏輯大小（最小 20G；不會縮小既有映像檔）。 |
+| `L4T_STORE_DIR` | 未設 | 改用另一顆 ext4 / xfs / btrfs 碟上的目錄而非映像檔；會 bind-mount 到 `./data/jetson_l4t/`，記為 `backend=directory-bind`。 |
+| `L4T_STORE_BACKEND` | 自動 | 無視偵測結果強制 `loop-image` / `directory-bind` / `native`（CI 用）。 |
 
-兩種 bind mount 都不會 persistent；重開機後跑 `make run -- -t prepare` 前要再 mount 一次。
+這個 mount 不會 persistent；重開機後再跑一次 `host_setup.sh`。`host_setup.sh` 會把選擇記在 `data/.l4t_store`，之後的執行絕不會重新格式化：若掛載失敗，它會提示你 `sudo e2fsck -f data/jetson_l4t.img`，而不是重建映像檔。
 
 僅供診斷用途，`JETSON_ALLOW_NON_UNIX_FS=1` 把 abort 降為警告：
 

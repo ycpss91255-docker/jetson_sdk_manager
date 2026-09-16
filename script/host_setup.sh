@@ -185,6 +185,8 @@ main() {
   make run -- -t flash
 
 Re-run this script after each reboot (settings are not persistent).
+Done flashing?  ./script/host_teardown.sh   restores the host in this boot.
+Removing the repo?  ./script/clean.sh purge   first — see README "Removing the repo".
 EOF
 }
 
