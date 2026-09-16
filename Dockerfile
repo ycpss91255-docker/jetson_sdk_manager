@@ -238,7 +238,7 @@ COPY script/lib /lint/script_lib
 RUN shellcheck -S warning /lint/wrapper/*.sh /lint/lib/*.sh && \
     shellcheck -S warning \
         /lint/prepare.sh /lint/flash.sh /lint/probe.sh /lint/clean.sh \
-        /lint/gui-entrypoint.sh /lint/nm_flash_guard.sh \
+        /lint/gui-entrypoint.sh /lint/nm_flash_guard.sh /lint/usb_ss_guard.sh \
         /lint/sdkm-entrypoint.sh \
         /lint/init_data_dirs.sh /lint/entrypoint.sh \
         /lint/host_setup.sh /lint/host_teardown.sh /lint/jetson.sh \
@@ -266,6 +266,9 @@ COPY --chmod=0755 script/probe.sh /opt/jetson_install/probe.sh
 # Host-side flash guard (#50 auto mode) — copied so its bats unit test
 # exercises the watcher instead of skipping. Sources lib/usb.sh below.
 COPY --chmod=0755 script/nm_flash_guard.sh /opt/jetson_install/nm_flash_guard.sh
+# Host-side USB SuperSpeed guard (#100) — same reason; drives a sysfs
+# fixture tree in its bats suite.
+COPY --chmod=0755 script/usb_ss_guard.sh /opt/jetson_install/usb_ss_guard.sh
 # SDK Manager launcher (#51) — copied so its fs-guard bats test runs.
 COPY --chmod=0755 script/sdkm-entrypoint.sh /opt/jetson_install/sdkm-entrypoint.sh
 # Host-side store lifecycle (#93): host_setup / host_teardown / clean drive
