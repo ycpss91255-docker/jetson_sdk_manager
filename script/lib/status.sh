@@ -142,6 +142,28 @@ status_kernel() {
   fi
 }
 
+# ── USB SuperSpeed guard (#100) ──────────────────────────────────────
+# The guard parks the SS half of the Jetson's connector for the flash and
+# its watcher restores it on boot / timeout. State outside a flash means a
+# connector may still be at USB 2 — worth a warning, never a blocker. The
+# state dir, file layout and path check are lib/usb.sh's (shared with the
+# guard); the port's `disable` is read back rather than trusted.
+status_usb_ss_guard() {
+  local state="${USB_SS_GUARD_STATE_DIR}/state" port
+  if [[ ! -f "${state}" ]]; then
+    _st ok "USB SuperSpeed guard idle — ./jetson flash parks the connector's SS half for the initrd link (usb_ss_guard.sh auto)"
+    return 0
+  fi
+  port="$(usb_ss_state_port "${state}")"
+  if ! usb_ss_port_ok "${port}"; then
+    _st warn "usb_ss_guard state ${state} names '${port:-?}', not a valid root-hub port — inspect it; sudo rm -f ${state}"
+  elif [[ "$(head -n1 "${port}/disable" 2>/dev/null)" == "1" ]]; then
+    _st warn "USB SuperSpeed half ${port##*/} is disabled by usb_ss_guard — expected during a flash; otherwise ./script/usb_ss_guard.sh enable (or ./jetson teardown)"
+  else
+    _st warn "usb_ss_guard state is stale: ${port##*/} is recorded but already enabled — ./script/usb_ss_guard.sh enable clears it"
+  fi
+}
+
 # ── jetson.yaml ──────────────────────────────────────────────────────
 
 # _status_yaml_scalar <file> <key> — first "key: value" scalar, with the

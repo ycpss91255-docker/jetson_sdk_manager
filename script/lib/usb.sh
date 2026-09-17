@@ -23,6 +23,68 @@ JETSON_RECOVERY_PIDS=('7023' '7223' '7423' '7523' '7e19')
 # nm_flash_guard.sh's auto mode watches for this PID to flip NM back on.
 JETSON_BOOTED_PID='7020'
 
+# Flash-initrd device-mode PID. During l4t_initrd_flash the board leaves RCM
+# and re-enumerates as this (RNDIS gadget, "Linux for Tegra") until the
+# flash finishes and it reboots into JETSON_BOOTED_PID. usb_ss_guard.sh
+# anchors on it when the guard is applied mid-flash (#100).
+# shellcheck disable=SC2034  # consumed by usb_ss_guard.sh, not in this file
+JETSON_INITRD_PID='7035'
+
+# ── usb_ss_guard.sh state (#100) ─────────────────────────────────────
+# Shared between usb_ss_guard.sh (writes) and lib/status.sh (reads), so the
+# defaults and the path check exist exactly once.
+#
+# The guard records which usb_port it disabled so `enable` can restore it,
+# and `enable` writes to that recorded path as root — so the record must
+# not be forgeable. It lives in a root-owned directory under /run (tmpfs,
+# cleared on boot like the sysfs setting itself; nobody but root can
+# pre-create /run/usb-ss-guard), and the path is re-validated on every use.
+#
+# Both roots are literal in production: an unprivileged caller's
+# environment must not be able to point the guard's privileged writes at
+# some other root-owned tree. The ONLY override is the explicit test mode
+# USB_SS_GUARD_TEST_ROOT=<dir> (sysfs at <dir>/sys, state at <dir>/run),
+# under which usb_ss_guard.sh also stops using sudo altogether.
+USB_SYSFS_PROD='/sys/bus/usb/devices'
+USB_SS_GUARD_STATE_DIR_PROD='/run/usb-ss-guard'
+# shellcheck disable=SC2034  # USB_SS_GUARD_STATE_DIR is read by usb_ss_guard.sh and status.sh
+if [[ -n "${USB_SS_GUARD_TEST_ROOT:-}" ]]; then
+  USB_SYSFS="${USB_SS_GUARD_TEST_ROOT}/sys"
+  USB_SS_GUARD_STATE_DIR="${USB_SS_GUARD_TEST_ROOT}/run"
+else
+  USB_SYSFS="${USB_SYSFS_PROD}"
+  USB_SS_GUARD_STATE_DIR="${USB_SS_GUARD_STATE_DIR_PROD}"
+fi
+
+# usb_ss_state_port <state file>
+# Prints the `port=` value of a guard state file (empty when absent).
+usb_ss_state_port() {
+  sed -n 's/^port=//p' "$1" 2>/dev/null | head -n1
+}
+
+# usb_ss_port_ok <port dir>
+# Returns 0 only for a root-hub usb_port directory the guard may write to:
+#   <USB_SYSFS>/usbN/N-0:1.0/usbN-portM   (all three N equal)
+# whose directory and `disable` attribute exist, are not symlinks, and
+# whose canonical path is exactly that of the root hub's canonical
+# directory plus the same trailing components — i.e. nothing in the tail
+# is a link pointing somewhere else. (The usbN entry itself IS a symlink
+# in the real sysfs, which is why the prefix is compared canonically.)
+usb_ss_port_ok() {
+  local port="$1" rel hub iface pname n1 n2 n3 m canon_hub
+  [[ -n "${port}" && "${port}" == "${USB_SYSFS}/"* ]] || return 1
+  rel="${port#"${USB_SYSFS}"/}"
+  [[ "${rel}" =~ ^usb([0-9]+)/([0-9]+)-0:1\.0/usb([0-9]+)-port([0-9]+)$ ]] || return 1
+  n1="${BASH_REMATCH[1]}"; n2="${BASH_REMATCH[2]}"; n3="${BASH_REMATCH[3]}"; m="${BASH_REMATCH[4]}"
+  [[ "${n1}" == "${n2}" && "${n1}" == "${n3}" ]] || return 1
+  hub="${USB_SYSFS}/usb${n1}"; iface="${n1}-0:1.0"; pname="usb${n1}-port${m}"
+  [[ -d "${port}" && ! -L "${port}" ]] || return 1
+  [[ -f "${port}/disable" && ! -L "${port}/disable" ]] || return 1
+  canon_hub="$(readlink -f "${hub}" 2>/dev/null)" || return 1
+  [[ -n "${canon_hub}" ]] || return 1
+  [[ "$(readlink -f "${port}/disable" 2>/dev/null)" == "${canon_hub}/${iface}/${pname}/disable" ]]
+}
+
 # jetson_pid_is_recovery <pid>
 # Echoes nothing; returns 0 when the PID is in the recovery list.
 # Case-folds the input so an uppercase hex PID (e.g. 7E19 from some

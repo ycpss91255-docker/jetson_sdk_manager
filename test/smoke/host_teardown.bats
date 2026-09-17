@@ -24,6 +24,8 @@ setup() {
   export UMOUNT_LOG
   NM_GUARD_LOG="${BATS_TEST_TMPDIR}/nm_guard.log"
   export NM_GUARD_LOG
+  USB_SS_GUARD_LOG="${BATS_TEST_TMPDIR}/usb_ss_guard.log"
+  export USB_SS_GUARD_LOG
 
   STUB_BIN="${BATS_TEST_TMPDIR}/stub-bin"
   mkdir -p "${STUB_BIN}"
@@ -53,6 +55,14 @@ printf '%s\n' "$*" >>"${NM_GUARD_LOG}"
 EOF
   chmod +x "${NM_GUARD_BIN}"
   export NM_GUARD_BIN
+  # Stub usb_ss_guard.sh likewise (#100) — no real sysfs port writes.
+  USB_SS_GUARD_BIN="${BATS_TEST_TMPDIR}/usb_ss_guard.sh"
+  cat >"${USB_SS_GUARD_BIN}" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${USB_SS_GUARD_LOG}"
+EOF
+  chmod +x "${USB_SS_GUARD_BIN}"
+  export USB_SS_GUARD_BIN
 
   # Keep the unmount target inside the tmpdir (no real root writes).
   export L4T_EXPORT_DIR="${BATS_TEST_TMPDIR}/srv/jetson_l4t"
@@ -150,6 +160,16 @@ EOF
   [[ ! -s "${UMOUNT_LOG}" ]]
   run cat "${NM_GUARD_LOG}"
   assert_output 'enable'   # enable is still called (it is itself a no-op)
+}
+
+# ── USB SuperSpeed guard (#100) ──────────────────────────────────────
+
+@test "host_teardown re-enables the connector's SuperSpeed half via usb_ss_guard.sh enable (which stops its own watcher)" {
+  run "${HOST_TEARDOWN}"
+  assert_success
+  assert_output --partial '6/6'
+  run cat "${USB_SS_GUARD_LOG}"
+  assert_output 'enable'
 }
 
 # ── store (#93) ──────────────────────────────────────────────────────

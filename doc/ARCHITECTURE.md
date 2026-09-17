@@ -11,8 +11,8 @@ How the repo is put together. For *using* it, see the [README](../README.md).
 | `status` | `lib/status.sh` checks + `lsusb -d 0955:` (same PID list as `script/probe.sh`) |
 | `prepare` | preflight (a Jetson in recovery, unless `--no-board`) → `sudo -v` → `./script/host_setup.sh` → `./script/init_data_dirs.sh` → `make run -- -t prepare` (auto-builds the image) |
 | `wait-rec` | polls `lsusb` for a recovery PID |
-| `flash` | preflight (recovery PID, `images` phase in `.prepared.yaml`) → `./script/nm_flash_guard.sh auto` → `make run -- -t flash` |
-| `teardown` | `./script/host_teardown.sh` |
+| `flash` | preflight (recovery PID, `images` phase in `.prepared.yaml`) → `./script/nm_flash_guard.sh auto` → `./script/usb_ss_guard.sh auto` → `make run -- -t flash` |
+| `teardown` | `./script/host_teardown.sh` (incl. `nm_flash_guard.sh enable` + `usb_ss_guard.sh enable`) |
 | `purge` | `./script/clean.sh purge [--keep-downloads]` |
 
 Other useful manual commands:
@@ -21,6 +21,7 @@ Other useful manual commands:
 make build -- -t <stage>      # rebuild one stage image (one -t per invocation)
 make run -- -t probe          # the recovery check on its own (or: bash ./script/probe.sh on the host)
 ./script/nm_flash_guard.sh status|disable|enable|auto|watch
+./script/usb_ss_guard.sh status|disable|enable|auto
 ./script/clean.sh build|rootfs|l4t|all|purge
 ```
 
@@ -38,6 +39,10 @@ Everything here touches the host kernel or Docker and cannot be done from inside
 ### `nm_flash_guard.sh`
 
 On a NetworkManager host, NM DHCP-probes the Jetson's USB gadget interface mid-flash and tears the link down (the "Flashing 99 %" stall, [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48)). `auto` marks the interface unmanaged for the flash and re-enables NM the moment the board re-enumerates as booted (`0955:7020`), so the host picks up `192.168.55.x` and you can SSH in. Subcommands: `status`, `disable`, `enable`, `auto [timeout]`, `watch`, `around <cmd>`, `install-autohook` / `uninstall-autohook` (a root helper so the detached re-enable works without a tty).
+
+### `usb_ss_guard.sh`
+
+The flash initrd's USB gadget (`0955:7035`) only needs USB 2, but it also tries to train a SuperSpeed link on the same connector; on some hosts that never succeeds and each retry tears the working high-speed device down (`Waiting for target to boot-up...` until timeout, [#100](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/100)). A USB-C / USB 3 connector is two `usb_port`s on two xHCI root hubs that share one ACPI `location`; `disable` finds the recovery device's root-hub port from its sysfs name (`3-1` → `usb3/3-0:1.0/usb3-port1`), requires the device to be at high speed, pairs the port with the *one* port on a SuperSpeed root hub (`speed` ≥ 5000) carrying the same non-zero `location`, and writes `1` to that port's `disable`. What was disabled is recorded as `port=` / `token=` in `/run/usb-ss-guard/state` — a root-owned directory nobody else can pre-create, because `enable` writes to the recorded path as root. That path is re-validated before every write (`lib/usb.sh` `usb_ss_port_ok`: `usbN/N-0:1.0/usbN-portM` under the sysfs root, no symlink in the tail, canonical path checked); anything else is refused. The sysfs root and the state directory are literal constants — nothing in the caller's environment can redirect a privileged write; the bats suite uses the one explicit override, `USB_SS_GUARD_TEST_ROOT=<dir>` (sysfs `<dir>/sys`, state `<dir>/run`, no sudo, announced with a `[test mode]` line). Timeouts from the command line and from `USB_SS_GUARD_TIMEOUT` / `USB_SS_GUARD_POLL_INTERVAL` are validated before anything is touched. `auto` starts the watcher as root (`sudo -n`) while the credential is fresh, the watcher writes its own pidfile and carries the token so a superseded watcher never undoes a newer guard, and only a PID `/proc` confirms to be a watcher is ever killed. No SuperSpeed sibling, behind a hub, ambiguous location or no `disable` attribute → message, exit 0. Subcommands: `status`, `disable`, `enable`, `auto [timeout]`.
 
 ## Stages
 
@@ -160,6 +165,8 @@ jetson_sdk_manager/
 │   ├── gui-entrypoint.sh        # SDK Manager GUI launcher + best-effort banner
 │   ├── jetson.sh                # ./jetson dispatcher
 │   ├── lib/                     # yaml / download / volume / store / status / usb / errors helpers
+│   ├── nm_flash_guard.sh        # Flash-scoped NetworkManager guard (#48)
+│   ├── usb_ss_guard.sh          # Flash-scoped SuperSpeed-port guard (#100)
 │   ├── host_setup.sh            # One-shot per-boot host prereqs (store/qemu/nfsd/USB)
 │   ├── host_teardown.sh         # Reverse host_setup.sh in the same boot
 │   ├── init_data_dirs.sh        # First-time data/ mkdir as non-root

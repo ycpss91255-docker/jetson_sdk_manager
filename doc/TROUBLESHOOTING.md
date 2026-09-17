@@ -107,6 +107,35 @@ Persist across reboots with `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`
 
 The in-container flash (either path) stalling partway is almost always the **host's NetworkManager** DHCP-probing the Jetson's USB gadget interface, timing out, and removing the address mid-transfer — the root cause traced in [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48). Run `./script/nm_flash_guard.sh auto` before flashing (it marks the interface unmanaged, then re-enables NM when the board boots). If instead you see `mount.nfs: ... No such file or directory`, the host `/srv/jetson_l4t` bridge is missing — `./script/host_setup.sh` sets it up (step 5/5).
 
+### Flash waits in `Waiting for target to boot-up...` while dmesg loops `Cannot enable. Maybe the USB cable is bad?`
+
+After `RCM-boot started` the board leaves RCM and comes back as the flash initrd's USB gadget (`0955:7035`, "Linux for Tegra", RNDIS). It only needs USB 2, but it also tries to train a SuperSpeed link on the same connector, and on some hosts (seen on an Ubuntu laptop, kernel 7.0, AGX Orin 64 GB, [#100](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/100)) that link never comes up. The xHCI SuperSpeed root hub then retries every few seconds, and each retry tears the working high-speed device down with it. `dmesg -w` shows the loop — note the two bus numbers, the SS half (`usb2-port3` here) and the HS half (`3-1`), which are the *same* physical connector:
+
+```
+usb 2-3: Device not responding to setup address.
+usb 2-3: device not accepting address 17, error -71
+usb usb2-port3: attempt power cycle
+usb 3-1: New USB device found, idVendor=0955, idProduct=7035  Product: Linux for Tegra
+rndis_host 3-1:1.0 usb0: register 'rndis_host' ...
+usb 3-1: USB disconnect, device number 71            ← same second
+usb usb2-port3: Cannot enable. Maybe the USB cable is bad?   (every 4 s)
+```
+
+`l4t_initrd_flash` sits in `Waiting for target to boot-up...` until its timeout; a hub vs. a direct port and a longer timeout make no difference, and it is not the cable. The fix is to switch the SuperSpeed half of that connector off on the host for the duration of the flash — the high-speed half keeps working and the board stays enumerated. `./jetson flash` does this for you via `./script/usb_ss_guard.sh auto` (it finds the recovery device's port, pairs it with the one SuperSpeed root-hub port that reports the same `location`, writes `disable=1` there, records it under `/run/usb-ss-guard/`, and a root watcher writes `0` back when the board boots as `0955:7020` or after 30 min; `./jetson status` shows ⚠ while a port is parked; `./jetson teardown` restores it too). If the flash is already looping, running `./script/usb_ss_guard.sh disable` mid-flash works as well — the board re-enumerates the same second.
+
+The watcher is started as root with `sudo -n` right after `disable` (while the sudo credential is fresh), so it needs no terminal later. If sudo refuses at that moment (credential expired, `timestamp_timeout=0`), `auto` says so and the port simply stays parked: run `./script/usb_ss_guard.sh enable` after the flash (`./jetson teardown` does), or reboot — the sysfs setting and the record under `/run` are both boot-scoped, so a reboot always restores the connector.
+
+Manual fallback (the two ports of one connector share a `location`; pick the one the Jetson is *not* on):
+
+```bash
+grep . /sys/bus/usb/devices/usb*/*-0:1.0/usb*-port*/location   # find the two ports with the same value
+echo 1 | sudo tee /sys/bus/usb/devices/usb2/2-0:1.0/usb2-port3/disable   # the SuperSpeed half
+# ... flash ...
+echo 0 | sudo tee /sys/bus/usb/devices/usb2/2-0:1.0/usb2-port3/disable   # or just reboot
+```
+
+`usb_ss_guard.sh` says so and does nothing when there is no SuperSpeed sibling (a USB-2-only cable, or the board behind a hub whose ports have no ACPI `location`) or when the kernel exposes no per-port `disable` attribute.
+
 ### SDK Manager: "Device mode forwarding host setup failed"
 
 This is **not** a fundamental Docker limitation (an earlier README claimed so — it was wrong). SDK Manager's `device_mode_host_setup.sh` needs `iptables` (NAT MASQUERADE) and `dig` (a DNS reachability probe); both now ship in the `sdkm-base` layer, so the `cli` / `gui` stages clear this step. If it still fails, confirm you ran `./script/host_setup.sh` + `./script/nm_flash_guard.sh auto` and are signed in to your NVIDIA Developer account. Context: [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48).

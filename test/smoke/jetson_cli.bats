@@ -47,7 +47,7 @@ EOF
   export PATH="${STUB_BIN}:${PATH}"
 
   # Sibling scripts jetson.sh calls by path: point them at loggers.
-  for s in host_setup.sh init_data_dirs.sh nm_flash_guard.sh host_teardown.sh clean.sh; do
+  for s in host_setup.sh init_data_dirs.sh nm_flash_guard.sh usb_ss_guard.sh host_teardown.sh clean.sh; do
     cat >"${BATS_TEST_TMPDIR}/${s}" <<EOF
 #!/usr/bin/env bash
 printf '${s} %s\n' "\$*" >>"\${CALLS}"
@@ -57,6 +57,7 @@ EOF
   export HOST_SETUP_BIN="${BATS_TEST_TMPDIR}/host_setup.sh"
   export INIT_DATA_DIRS_BIN="${BATS_TEST_TMPDIR}/init_data_dirs.sh"
   export NM_GUARD_BIN="${BATS_TEST_TMPDIR}/nm_flash_guard.sh"
+  export USB_SS_GUARD_BIN="${BATS_TEST_TMPDIR}/usb_ss_guard.sh"
   export HOST_TEARDOWN_BIN="${BATS_TEST_TMPDIR}/host_teardown.sh"
   export CLEAN_BIN="${BATS_TEST_TMPDIR}/clean.sh"
 
@@ -70,6 +71,8 @@ EOF
   USBCORE_PARAMS="${BATS_TEST_TMPDIR}/usbcore"; mkdir -p "${USBCORE_PARAMS}"; export USBCORE_PARAMS
   printf -- '-1\n' >"${USBCORE_PARAMS}/autosuspend"; printf '2048\n' >"${USBCORE_PARAMS}/usbfs_memory_mb"
   NFSD_SYSFS="${BATS_TEST_TMPDIR}/nfsd"; mkdir -p "${NFSD_SYSFS}"; export NFSD_SYSFS
+  # No SuperSpeed port parked (#100) — keep status hermetic on a host mid-flash.
+  USB_SS_GUARD_TEST_ROOT="${BATS_TEST_TMPDIR}/ssroot"; export USB_SS_GUARD_TEST_ROOT
   STAT_BIN="${BATS_TEST_TMPDIR}/stat-ext4"; printf '#!/usr/bin/env bash\necho ext4\n' >"${STAT_BIN}"; chmod +x "${STAT_BIN}"; export STAT_BIN
   cat >"${STUB_BIN}/docker" <<'EOF'
 #!/usr/bin/env bash
@@ -119,7 +122,16 @@ EOF
   assert_output --partial '192.168.55.1'
   run grep -vE '^(lsusb|sudo)' "${CALLS}"
   assert_line --index 0 'nm_flash_guard.sh auto'
-  assert_line --index 1 'make run -- -t flash'
+  assert_line --index 2 'make run -- -t flash'
+}
+
+@test "flash order is nm_flash_guard auto → usb_ss_guard auto → make run -t flash (#100)" {
+  LSUSB_OUT="${REC}" run "${JETSON}" flash
+  assert_success
+  run grep -vE '^(lsusb|sudo)' "${CALLS}"
+  assert_line --index 0 'nm_flash_guard.sh auto'
+  assert_line --index 1 'usb_ss_guard.sh auto'
+  assert_line --index 2 'make run -- -t flash'
 }
 
 @test "flash refuses when prepare has not recorded the images phase" {
@@ -185,7 +197,8 @@ EOF
   assert_line --index 1 'init_data_dirs.sh '
   assert_line --index 2 'make run -- -t prepare'
   assert_line --index 3 'nm_flash_guard.sh auto'
-  assert_line --index 4 'make run -- -t flash'
+  assert_line --index 4 'usb_ss_guard.sh auto'
+  assert_line --index 5 'make run -- -t flash'
 }
 
 @test "all stops after a failed prepare and tells the user how to resume" {
@@ -363,7 +376,8 @@ EOF
   assert_line --index 0 'host_setup.sh '
   assert_line --index 2 'make run -- -t prepare'
   assert_line --index 3 'nm_flash_guard.sh auto'
-  assert_line --index 4 'make run -- -t flash'
+  assert_line --index 4 'usb_ss_guard.sh auto'
+  assert_line --index 5 'make run -- -t flash'
 }
 
 @test "flash validates sudo once before the NetworkManager guard (nm_flash_guard needs root)" {

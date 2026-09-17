@@ -20,6 +20,8 @@ setup() {
     skip "script/lib/status.sh not present in this image"
   fi
 
+  # usb.sh resolves the usb_ss_guard paths when sourced: test mode first.
+  USB_SS_GUARD_TEST_ROOT="${BATS_TEST_TMPDIR}/ssroot"; export USB_SS_GUARD_TEST_ROOT
   # shellcheck disable=SC1091
   . "${LIB_DIR}/errors.sh"
   # shellcheck disable=SC1091
@@ -49,6 +51,14 @@ EOF
   USBCORE_PARAMS="${BATS_TEST_TMPDIR}/usbcore"; mkdir -p "${USBCORE_PARAMS}"; export USBCORE_PARAMS
   printf -- '-1\n' >"${USBCORE_PARAMS}/autosuspend"; printf '2048\n' >"${USBCORE_PARAMS}/usbfs_memory_mb"
   NFSD_SYSFS="${BATS_TEST_TMPDIR}/sys-module-nfsd"; export NFSD_SYSFS
+  # usb_ss_guard (#100): explicit test mode — sysfs and state under one
+  # root (the production paths are literal and not overridable otherwise).
+  USB_SS_GUARD_STATE_DIR="${USB_SS_GUARD_TEST_ROOT}/run"
+  mkdir -p "${USB_SS_GUARD_STATE_DIR}"
+  USB_SYSFS="${USB_SS_GUARD_TEST_ROOT}/sys"
+  SS_PORT="${USB_SYSFS}/usb2/2-0:1.0/usb2-port3"
+  mkdir -p "${SS_PORT}"
+  printf '0\n' >"${SS_PORT}/disable"
 }
 
 _level() { cut -f1; }
@@ -153,6 +163,38 @@ _level() { cut -f1; }
   assert_output --partial 'nfsd'
   assert_output --partial $'warn\t'
   assert_output --partial 'autosuspend'
+}
+
+# ── USB SuperSpeed guard (#100) ──────────────────────────────────────
+
+@test "status_usb_ss_guard: no state file → ok (nothing disabled)" {
+  run status_usb_ss_guard
+  assert_output --partial $'ok\t'
+  assert_output --partial 'SuperSpeed'
+}
+
+@test "status_usb_ss_guard: state present and the port reads 1 → warn naming the port and the enable command" {
+  printf '1\n' >"${SS_PORT}/disable"
+  printf 'port=%s\ntoken=abc\n' "${SS_PORT}" >"${USB_SS_GUARD_STATE_DIR}/state"
+  run status_usb_ss_guard
+  assert_output --partial $'warn\t'
+  assert_output --partial 'usb2-port3'
+  assert_output --partial 'disabled'
+  assert_output --partial 'usb_ss_guard.sh enable'
+}
+
+@test "status_usb_ss_guard: state present but the port reads 0 → warn 'stale'" {
+  printf 'port=%s\ntoken=abc\n' "${SS_PORT}" >"${USB_SS_GUARD_STATE_DIR}/state"
+  run status_usb_ss_guard
+  assert_output --partial $'warn\t'
+  assert_output --partial 'stale'
+}
+
+@test "status_usb_ss_guard: state names a path that is not a root-hub port → warn 'not a valid'" {
+  printf 'port=%s\ntoken=abc\n' "${BATS_TEST_TMPDIR}/elsewhere" >"${USB_SS_GUARD_STATE_DIR}/state"
+  run status_usb_ss_guard
+  assert_output --partial $'warn\t'
+  assert_output --partial 'not a valid'
 }
 
 # ── config ───────────────────────────────────────────────────────────

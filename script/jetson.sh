@@ -5,13 +5,14 @@
 # them, adds preflight checks that improve the experience (is the board in
 # recovery? did prepare finish?), and prints what to do next. It never
 # re-implements a step: host_setup.sh, prepare.sh (in the container),
-# nm_flash_guard.sh, flash.sh, host_teardown.sh and clean.sh stay the
-# authorities, and their own gates still apply if someone bypasses this.
+# nm_flash_guard.sh, usb_ss_guard.sh, flash.sh, host_teardown.sh and clean.sh
+# stay the authorities, and their own gates still apply if someone bypasses
+# this.
 #
 #   ./jetson status              host readiness + Jetson USB state
 #   ./jetson prepare             host_setup → init_data_dirs → make run -t prepare
 #   ./jetson wait-rec [seconds]  poll until a Jetson shows up in recovery
-#   ./jetson flash               (board in REC) nm guard → make run -t flash
+#   ./jetson flash               (board in REC) nm guard → usb ss guard → make run -t flash
 #   ./jetson all                 prepare → wait-rec → flash
 #   ./jetson teardown            host_teardown.sh
 #   ./jetson purge [--yes] [--keep-downloads]   clean.sh purge
@@ -39,6 +40,7 @@ L4T_REPO_ROOT="${L4T_REPO_ROOT:-${_REPO}}"
 HOST_SETUP_BIN="${HOST_SETUP_BIN:-${_HERE}/host_setup.sh}"
 INIT_DATA_DIRS_BIN="${INIT_DATA_DIRS_BIN:-${_HERE}/init_data_dirs.sh}"
 NM_GUARD_BIN="${NM_GUARD_BIN:-${_HERE}/nm_flash_guard.sh}"
+USB_SS_GUARD_BIN="${USB_SS_GUARD_BIN:-${_HERE}/usb_ss_guard.sh}"
 HOST_TEARDOWN_BIN="${HOST_TEARDOWN_BIN:-${_HERE}/host_teardown.sh}"
 CLEAN_BIN="${CLEAN_BIN:-${_HERE}/clean.sh}"
 
@@ -142,6 +144,10 @@ cmd_flash() {
   _sudo_once
   _say "flash — guarding NetworkManager for the USB link"
   "${NM_GUARD_BIN}" auto
+  # The initrd gadget's SuperSpeed link may never train and each retry tears
+  # the working high-speed device down (#100); park the SS half until boot.
+  _say "flash — guarding the connector's SuperSpeed half for the initrd link"
+  "${USB_SS_GUARD_BIN}" auto
   _say "flash — writing images (make run -- -t flash)"
   (cd "${_REPO}" && make run -- -t flash)
   _say "flash — done"
@@ -304,7 +310,7 @@ _status_srv() {
 }
 
 # The check list is overridable so the test suite can inject a failing one.
-JETSON_STATUS_CHECKS="${JETSON_STATUS_CHECKS:-_status_tools status_config status_store _status_srv status_kernel _status_nm _status_images status_prepare status_jetson}"
+JETSON_STATUS_CHECKS="${JETSON_STATUS_CHECKS:-_status_tools status_config status_store _status_srv status_kernel _status_nm status_usb_ss_guard _status_images status_prepare status_jetson}"
 
 cmd_status() {
   local strict="" bad=0 warn=0 level msg chk out

@@ -4,7 +4,7 @@
 # Run this on the HOST (not inside the container) when you are DONE flashing
 # and want to hand the machine back to its normal configuration in the same
 # boot, instead of waiting for a reboot. It undoes, in reverse, what
-# host_setup.sh + nm_flash_guard.sh changed:
+# host_setup.sh + nm_flash_guard.sh + usb_ss_guard.sh changed:
 #
 #   1. /srv/jetson_l4t bind   — unmount the NFS export bridge (host_setup 5/6)
 #                               and drop the empty directory it lived in
@@ -15,6 +15,9 @@
 #   4. USB autosuspend        — restore the kernel default (2)
 #   5. NetworkManager guard   — remove the flash-unmanaged file and stop a
 #                               running `nm_flash_guard auto` watcher
+#   6. USB SuperSpeed guard   — `usb_ss_guard.sh enable`: stops its own
+#                               `auto` watcher and re-enables the SS half
+#                               of the Jetson's connector (#100)
 #
 # What it does NOT undo: the QEMU binfmt registration (harmless to leave) and
 # the nfsd kernel module (other services may rely on it; unloading is risky).
@@ -54,12 +57,15 @@ NM_GUARD_BIN="${NM_GUARD_BIN:-${_HERE}/nm_flash_guard.sh}"
 # `auto` watcher (it re-enables NM on its own, but a same-boot teardown wants
 # it gone now rather than after its timeout).
 NM_GUARD_PIDFILE="${NM_GUARD_PIDFILE:-${TMPDIR:-/tmp}/nm-jetson-flash-guard.pid}"
+# usb_ss_guard.sh (#100): `enable` stops its own watcher (verified through
+# /proc) and restores the port it recorded, so no state path is known here.
+USB_SS_GUARD_BIN="${USB_SS_GUARD_BIN:-${_HERE}/usb_ss_guard.sh}"
 
 _step() { printf '\n\033[36m[host-teardown] %s\033[0m\n' "$1" >&2; }
 _ok()   { printf '  ok: %s\n' "$1" >&2; }
 
 main() {
-  _step "1/5 Unmounting the NFS export bridge ${L4T_EXPORT_DIR}"
+  _step "1/6 Unmounting the NFS export bridge ${L4T_EXPORT_DIR}"
   if "${MOUNTPOINT_BIN}" -q "${L4T_EXPORT_DIR}"; then
     sudo "${UMOUNT_BIN}" "${L4T_EXPORT_DIR}"
     _ok "${L4T_EXPORT_DIR} unmounted"
@@ -73,7 +79,7 @@ main() {
     _ok "removed empty ${L4T_EXPORT_DIR}"
   fi
 
-  _step "2/5 Unmounting the L4T data store ${L4T_STORE_DATA_DIR}"
+  _step "2/6 Unmounting the L4T data store ${L4T_STORE_DATA_DIR}"
   # Order matters: /srv is a bind OF this mount, so it had to go first.
   # umount detaches the loop device by itself (mount -o loop sets autoclear).
   if ! "${MOUNTPOINT_BIN}" -q "${L4T_STORE_DATA_DIR}"; then
@@ -88,7 +94,7 @@ main() {
     _ok "${L4T_STORE_DATA_DIR} unmounted (image + marker kept; clean.sh purge removes them)"
   fi
 
-  _step "3/5 Restoring usbfs buffer to the kernel default (${USBFS_MEMORY_MB_DEFAULT} MB)"
+  _step "3/6 Restoring usbfs buffer to the kernel default (${USBFS_MEMORY_MB_DEFAULT} MB)"
   if [[ -w "${USBCORE_PARAMS}/usbfs_memory_mb" ]] || sudo test -e "${USBCORE_PARAMS}/usbfs_memory_mb"; then
     echo "${USBFS_MEMORY_MB_DEFAULT}" | sudo tee "${USBCORE_PARAMS}/usbfs_memory_mb" >/dev/null
     _ok "usbfs_memory_mb = ${USBFS_MEMORY_MB_DEFAULT}"
@@ -96,7 +102,7 @@ main() {
     _ok "usbcore not loaded — usbfs_memory_mb left as-is (boot-reset)"
   fi
 
-  _step "4/5 Restoring USB autosuspend to the kernel default (${USBCORE_AUTOSUSPEND_DEFAULT})"
+  _step "4/6 Restoring USB autosuspend to the kernel default (${USBCORE_AUTOSUSPEND_DEFAULT})"
   if [[ -w "${USBCORE_PARAMS}/autosuspend" ]] || sudo test -e "${USBCORE_PARAMS}/autosuspend"; then
     echo "${USBCORE_AUTOSUSPEND_DEFAULT}" | sudo tee "${USBCORE_PARAMS}/autosuspend" >/dev/null
     _ok "autosuspend = ${USBCORE_AUTOSUSPEND_DEFAULT}"
@@ -104,7 +110,7 @@ main() {
     _ok "usbcore not loaded — autosuspend left as-is (boot-reset)"
   fi
 
-  _step "5/5 Restoring NetworkManager control of USB gadget interfaces"
+  _step "5/6 Restoring NetworkManager control of USB gadget interfaces"
   # Stop a running `nm_flash_guard auto` watcher first so it can't race the
   # `enable` below or re-toggle later. The watcher re-enables NM itself, but a
   # same-boot teardown wants it gone now instead of after its timeout.
@@ -123,6 +129,15 @@ main() {
     "${NM_GUARD_BIN}" enable
   else
     printf '  nm_flash_guard.sh not found at %s — skip NM restore\n' "${NM_GUARD_BIN}" >&2
+  fi
+
+  _step "6/6 Re-enabling the SuperSpeed half of the Jetson's USB connector"
+  # `enable` stops a running `auto` watcher itself (only a PID /proc
+  # confirms is a usb_ss_guard watcher) and is a no-op without state.
+  if [[ -x "${USB_SS_GUARD_BIN}" ]]; then
+    "${USB_SS_GUARD_BIN}" enable
+  else
+    printf '  usb_ss_guard.sh not found at %s — skip USB SuperSpeed restore\n' "${USB_SS_GUARD_BIN}" >&2
   fi
 
   cat >&2 <<'EOF'
