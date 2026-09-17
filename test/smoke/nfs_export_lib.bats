@@ -160,6 +160,107 @@ EOF
   [[ ! -s "${SUDO_LOG}" ]]
 }
 
+# ── path confinement (review round 2): canonical, not string-prefix ──
+# Every privileged exportfs / mkdir target must canonicalise (readlink -f;
+# for a not-yet-existing tmp, its nearest existing parent) to a path under
+# the export dir. `..` and symlink escapes are refused before anything
+# runs; each test asserts no exportfs -u / -o and no mkdir happened.
+
+_no_privileged_calls() {
+  if [[ -e "${EXPORTFS_LOG}" ]]; then
+    run grep -cE '^exportfs -(u|o)' "${EXPORTFS_LOG}"
+    assert_output 0
+  fi
+}
+
+@test "confinement: nfs_export_on refuses a tree that dot-dots out of the export dir" {
+  local outside="${BATS_TEST_TMPDIR}/outside/Linux_for_Tegra"
+  mkdir -p "${outside}/rootfs" "${outside}/tools/kernel_flash/images" "${outside}/tools/kernel_flash/tmp"
+  run nfs_export_on "${BATS_TEST_TMPDIR}/srv/jetson_l4t/../outside/Linux_for_Tegra"
+  assert_failure 1
+  assert_output --partial 'Error [host-config]'
+  assert_output --partial 'refusing'
+  _no_privileged_calls
+  [[ ! -e "${EXPORTFS_LOG}" ]]
+}
+
+@test "confinement: nfs_export_on refuses a tree that is a symlink escaping the export dir" {
+  local outside="${BATS_TEST_TMPDIR}/outside/Linux_for_Tegra"
+  mkdir -p "${outside}/rootfs" "${outside}/tools/kernel_flash/images" "${outside}/tools/kernel_flash/tmp"
+  ln -s "${outside}" "${BATS_TEST_TMPDIR}/srv/jetson_l4t/link"
+  run nfs_export_on "${BATS_TEST_TMPDIR}/srv/jetson_l4t/link"
+  assert_failure 1
+  assert_output --partial 'refusing'
+  _no_privileged_calls
+  [[ ! -e "${EXPORTFS_LOG}" ]]
+}
+
+@test "confinement: nfs_export_on refuses when one of the three paths is a symlink out of the export dir" {
+  mkdir -p "${BATS_TEST_TMPDIR}/outside/rootfs"
+  rm -rf "${L4T}/rootfs"; ln -s "${BATS_TEST_TMPDIR}/outside/rootfs" "${L4T}/rootfs"
+  run nfs_export_on "${L4T}"
+  assert_failure 1
+  assert_output --partial 'refusing'
+  assert_output --partial 'rootfs'
+  _no_privileged_calls
+  [[ ! -e "${EXPORTFS_LOG}" ]]
+}
+
+@test "confinement: tmp is not created when its parent is a symlink out of the export dir" {
+  mkdir -p "${BATS_TEST_TMPDIR}/outside/kernel_flash/images"
+  rm -rf "${L4T}/tools/kernel_flash"; ln -s "${BATS_TEST_TMPDIR}/outside/kernel_flash" "${L4T}/tools/kernel_flash"
+  run nfs_export_on "${L4T}"
+  assert_failure 1
+  assert_output --partial 'refusing'
+  [[ ! -e "${BATS_TEST_TMPDIR}/outside/kernel_flash/tmp" ]]   # mkdir never ran
+  _no_privileged_calls
+  [[ ! -e "${EXPORTFS_LOG}" ]]
+}
+
+@test "confinement: nfs_export_off skips a tree outside the export dir (message, nothing unexported)" {
+  run nfs_export_off "${BATS_TEST_TMPDIR}/outside/Linux_for_Tegra"
+  assert_success
+  assert_output --partial 'skipping'
+  [[ ! -e "${EXPORTFS_LOG}" ]]
+  run nfs_export_off "${BATS_TEST_TMPDIR}/srv/jetson_l4t/../outside/Linux_for_Tegra"
+  assert_success
+  assert_output --partial 'skipping'
+  [[ ! -e "${EXPORTFS_LOG}" ]]
+}
+
+@test "confinement: nfs_export_off_all ignores etab entries that dot-dot or symlink out of the export dir" {
+  mkdir -p "${BATS_TEST_TMPDIR}/outside/rootfs"
+  ln -s "${BATS_TEST_TMPDIR}/outside" "${BATS_TEST_TMPDIR}/srv/jetson_l4t/link"
+  _etab "${BATS_TEST_TMPDIR}/srv/jetson_l4t/../outside/rootfs" "${BATS_TEST_TMPDIR}/srv/jetson_l4t/link/rootfs"
+  run nfs_export_off_all ""
+  assert_success
+  assert_output --partial 'skipping'
+  [[ ! -e "${EXPORTFS_LOG}" ]]
+}
+
+@test "confinement: an unexport target whose tree is already gone is accepted when its nearest existing parent is the export dir" {
+  local gone="${BATS_TEST_TMPDIR}/srv/jetson_l4t/JetPack_gone/Linux_for_Tegra"
+  _etab "${gone}/rootfs"
+  run nfs_export_off_all ""
+  assert_success
+  run cat "${EXPORTFS_LOG}"
+  assert_line --index 0 "exportfs -u [fc00:1:1::/48]:${gone}/rootfs"
+  assert_line --index 1 'exportfs -f'
+}
+
+@test "confinement: the export dir itself (or a symlinked export dir) canonicalises — a tree behind the /srv symlink is accepted" {
+  # Tests and the real bridge alike: the export dir may be a symlink / bind
+  # to data/jetson_l4t; a path inside it must still pass.
+  rm -rf "${BATS_TEST_TMPDIR}/srv/jetson_l4t"
+  mkdir -p "${BATS_TEST_TMPDIR}/data/jetson_l4t"
+  ln -s "${BATS_TEST_TMPDIR}/data/jetson_l4t" "${BATS_TEST_TMPDIR}/srv/jetson_l4t"
+  mkdir -p "${L4T}/rootfs" "${L4T}/tools/kernel_flash/images"
+  run nfs_export_on "${L4T}"
+  assert_success
+  run grep -c '^exportfs -o' "${EXPORTFS_LOG}"
+  assert_output 3
+}
+
 # ── paths ────────────────────────────────────────────────────────────
 
 @test "nfs_export_paths: rootfs, kernel_flash/images and kernel_flash/tmp, in that order" {
