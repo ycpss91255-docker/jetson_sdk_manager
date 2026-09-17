@@ -34,7 +34,10 @@
 # explicit test mode instead: NFS_EXPORT_TEST_ROOT=<dir> → exportfs is
 # <dir>/bin/exportfs, the export table <dir>/etab, the export dir
 # <dir>/srv/jetson_l4t, and exportfs runs DIRECTLY — no sudo at all — with
-# a "[test mode]" line printed when the lib is sourced.
+# a "[test mode]" line printed when the lib is sourced. Round 2: every
+# path a privileged call touches is confined on the CANONICAL filesystem
+# (nfs_path_confined: no `..`, readlink -f under the export dir, symlink
+# escapes refused) — also the unexport side, incl. entries read from etab.
 #
 # Sourced by host_setup.sh, host_teardown.sh and jetson.sh (status / flash
 # preflight).
@@ -88,16 +91,47 @@ _nfs_ok()   { printf '  ok: %s\n' "$1" >&2; }
 _nfs_note() { printf '  %s\n' "$1" >&2; }
 _nfs_warn() { printf '  \033[33mwarning: %s\033[0m\n' "$1" >&2; }
 
-# _nfs_assert_our_path <path> — refuse anything that is not under the
-# export dir: it is the only thing a privileged exportfs / mkdir may touch.
-_nfs_assert_our_path() {
-  local dir
+# nfs_path_confined <path> — true when <path> is a strict descendant of
+# the export dir on the CANONICAL filesystem, i.e. what root would really
+# touch. A string prefix is not enough (review round 2): `..` components
+# and symlinks under /srv/jetson_l4t can point anywhere. Rules:
+#   - literal must be "<dir>/<something>" with no `.` / `..` component
+#   - readlink -f of the path (or, when it does not exist yet — tmp before
+#     its mkdir, a tree already deleted before teardown — of its nearest
+#     existing parent) must lie inside readlink -f of the export dir; the
+#     export dir itself is only accepted for a NON-existing path's parent
+# So a symlink whose target is inside the dir passes; one that escapes,
+# or a `..` hop, does not. The export dir may itself be a symlink / bind
+# (the bridge) — it is canonicalised too.
+nfs_path_confined() {
+  local p="$1" dir dir_c probe c
   dir="$(nfs_export_dir)"
-  [[ "$1" == "${dir}/"* ]] && return 0
+  [[ "${p}" == "${dir}/"?* ]] || return 1
+  case "/${p}/" in */../*|*/./*) return 1 ;; esac
+  dir_c="$(readlink -f -- "${dir}" 2>/dev/null)" || return 1
+  [[ -n "${dir_c}" ]] || return 1
+  if [[ -e "${p}" || -L "${p}" ]]; then
+    c="$(readlink -f -- "${p}" 2>/dev/null)" || return 1
+    [[ -n "${c}" && "${c}" == "${dir_c}/"?* ]]
+    return
+  fi
+  # Nearest existing ancestor.
+  probe="${p%/*}"
+  while [[ -n "${probe}" && ! -e "${probe}" && ! -L "${probe}" ]]; do probe="${probe%/*}"; done
+  [[ -n "${probe}" ]] || return 1
+  c="$(readlink -f -- "${probe}" 2>/dev/null)" || return 1
+  [[ -n "${c}" ]] && { [[ "${c}" == "${dir_c}" ]] || [[ "${c}" == "${dir_c}/"?* ]]; }
+}
+
+# _nfs_assert_our_path <path> — nfs_path_confined or emit_error. Every
+# privileged exportfs / mkdir target goes through this first.
+_nfs_assert_our_path() {
+  nfs_path_confined "$1" && return 0
   emit_error \
     --category host-config \
-    --detail "refusing to export ${1}: not under ${dir}" \
-    --action "The L4T tree is resolved from data/jetson_l4t's .prepared.yaml and re-rooted at ${dir}; do not pass other paths"
+    --detail "refusing to touch ${1}: not (canonically) under $(nfs_export_dir) — a .. component, or a symlink pointing outside" \
+    --action "The L4T tree is resolved from data/jetson_l4t's .prepared.yaml and re-rooted at $(nfs_export_dir); do not pass other paths" \
+    --action "Check for symlinks under $(nfs_export_dir): find $(nfs_export_dir) -maxdepth 4 -type l"
   return 1
 }
 
@@ -183,7 +217,7 @@ nfs_export_on() {
     _nfs_note "$(nfs_exportfs_bin) not installed (no nfs-kernel-server) — the flash container serves NFS itself"
     return 0
   fi
-  _nfs_assert_our_path "${l4t}/" || return 1
+  _nfs_assert_our_path "${l4t}" || return 1
   while IFS= read -r p; do
     if [[ ! -d "${p}" ]]; then
       emit_error \
@@ -193,16 +227,26 @@ nfs_export_on() {
         --action "Check the $(nfs_export_dir) bridge: ./jetson status, or re-run ./script/host_setup.sh"
       return 1
     fi
+    _nfs_assert_our_path "${p}" || return 1
   done < <(nfs_export_required_paths "${l4t}")
   # tmp is created by NVIDIA's flash-time network_prerequisite, so a freshly
-  # prepared tree does not have it yet.
-  if [[ ! -d "${l4t}/tools/kernel_flash/tmp" ]] && ! _nfs_mkdir "${l4t}/tools/kernel_flash/tmp"; then
-    emit_error \
-      --category host-config \
-      --detail "cannot create ${l4t}/tools/kernel_flash/tmp" \
-      --action "Check the path (a file in the way?) and permissions, then ./jetson flash again"
-    return 1
+  # prepared tree does not have it yet. _nfs_mkdir confines the path via its
+  # nearest existing parent before creating anything.
+  if [[ ! -d "${l4t}/tools/kernel_flash/tmp" ]]; then
+    if ! _nfs_mkdir "${l4t}/tools/kernel_flash/tmp"; then
+      nfs_path_confined "${l4t}/tools/kernel_flash/tmp" || return 1   # already reported
+      emit_error \
+        --category host-config \
+        --detail "cannot create ${l4t}/tools/kernel_flash/tmp" \
+        --action "Check the path (a file in the way?) and permissions, then ./jetson flash again"
+      return 1
+    fi
   fi
+  # Confine every export target once more on the canonical filesystem, now
+  # that all three exist — the check right before the privileged call.
+  while IFS= read -r p; do
+    _nfs_assert_our_path "${p}" || return 1
+  done < <(nfs_export_paths "${l4t}")
   while IFS= read -r p; do
     spec="$(nfs_export_spec "${p}")"
     _nfs_exportfs -u "${spec}" >/dev/null 2>&1 || true
@@ -228,11 +272,19 @@ nfs_export_on() {
 # each (by name — the tree may already be gone; "not exported" ignored),
 # then flush once. Returns 1 when the flush fails.
 _nfs_unexport_specs() {
-  local client p
+  local client p n=0
   while IFS=$'\t' read -r client p; do
     [[ -n "${p}" ]] || continue
+    # Same confinement as the export side, per entry — the path may come from
+    # the export table, which root maintains but is still data, not trust.
+    if ! nfs_path_confined "${p}"; then
+      _nfs_note "skipping ${p}: not (canonically) under $(nfs_export_dir)"
+      continue
+    fi
+    n=$((n+1))
     _nfs_exportfs -u "$(nfs_export_spec "${p}" "${client}")" >/dev/null 2>&1 || true
   done
+  (( n > 0 )) || return 0        # nothing was ours: nothing to flush
   if ! _nfs_exportfs -f; then
     _nfs_warn "exportfs -f failed — the kernel export cache was not flushed"
     return 1
@@ -244,6 +296,10 @@ _nfs_unexport_specs() {
 nfs_export_off() {
   local l4t="$1" p
   nfs_export_available || return 0
+  if ! nfs_path_confined "${l4t}"; then
+    _nfs_note "skipping ${l4t}: not (canonically) under $(nfs_export_dir) — nothing unexported"
+    return 0
+  fi
   while IFS= read -r p; do printf '%s\t%s\n' "${NFS_EXPORT_CLIENT}" "${p}"; done < <(nfs_export_paths "${l4t}") \
     | _nfs_unexport_specs || return 1
   _nfs_ok "unexported ${l4t}/{rootfs,tools/kernel_flash/{images,tmp}}"
@@ -256,7 +312,7 @@ nfs_export_off() {
 # too; otherwise they pin the /srv bridge and its umount says "busy".
 # Deduplicated, one flush. Never touches paths outside the export dir.
 nfs_export_off_all() {
-  local l4t p specs n
+  local l4t p specs n client
   nfs_export_available || return 0
   specs="$(
     for l4t in "$@"; do
@@ -265,8 +321,18 @@ nfs_export_off_all() {
     done
     nfs_export_table_under "$(nfs_export_dir)/" | cut -f1,2
   )"
-  specs="$(printf '%s\n' "${specs}" | awk -F'\t' 'NF && !seen[$0]++')"
+  # Deduplicate, then keep only what canonicalises under the export dir
+  # (the table is data: a `..` or symlink entry is skipped with a note).
+  specs="$(printf '%s\n' "${specs}" | awk -F'\t' 'NF && !seen[$0]++' \
+    | while IFS=$'\t' read -r client p; do
+        if nfs_path_confined "${p}"; then printf '%s\t%s\n' "${client}" "${p}"
+        else _nfs_note "skipping ${p}: not (canonically) under $(nfs_export_dir)"; fi
+      done)"
   n="$(printf '%s\n' "${specs}" | grep -c . || true)"
+  if (( n == 0 )); then
+    _nfs_ok "nothing of ours exported under $(nfs_export_dir)"
+    return 0
+  fi
   printf '%s\n' "${specs}" | _nfs_unexport_specs || return 1
   _nfs_ok "unexported ${n} path(s) under $(nfs_export_dir)"
 }
