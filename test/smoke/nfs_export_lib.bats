@@ -248,6 +248,80 @@ _no_privileged_calls() {
   assert_line --index 1 'exportfs -f'
 }
 
+# TOCTOU (review round 3): the check must sit right before EACH privileged
+# call, not in a separate pre-check loop. The stub swaps the path for a
+# symlink to the outside the moment it sees `-u` for it — the following `-o`
+# must not happen, and the run must fail.
+_swap_on_unexport_stub() {
+  cat >"${TEST_BIN}/exportfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'exportfs %s\n' "$*" >>"${EXPORTFS_LOG}"
+if [[ "${1:-}" == -u && -n "${SWAP_PATH:-}" && "${2##*:}" == "${SWAP_PATH}" ]]; then
+  rm -rf -- "${SWAP_PATH}" && ln -s "${SWAP_TARGET}" "${SWAP_PATH}"
+fi
+exit 0
+EOF
+  chmod +x "${TEST_BIN}/exportfs"
+}
+
+@test "confinement (TOCTOU): a path swapped for an outside symlink after its -u is never exported; run fails" {
+  _swap_on_unexport_stub
+  mkdir -p "${BATS_TEST_TMPDIR}/outside/images"
+  SWAP_PATH="${L4T}/tools/kernel_flash/images" SWAP_TARGET="${BATS_TEST_TMPDIR}/outside/images" run nfs_export_on "${L4T}"
+  assert_failure 1
+  assert_output --partial 'refusing'
+  assert_output --partial 'kernel_flash/images'
+  run grep -c "^exportfs -o .*:${L4T}/tools/kernel_flash/images\$" "${EXPORTFS_LOG}"
+  assert_output 0
+  # The other two are still exported and the table still flushed.
+  run grep -c '^exportfs -o' "${EXPORTFS_LOG}"
+  assert_output 2
+  run tail -n1 "${EXPORTFS_LOG}"
+  assert_output 'exportfs -f'
+}
+
+@test "confinement (TOCTOU): rootfs swapped after its -u → no -o for rootfs, images + tmp still exported, exit 1" {
+  _swap_on_unexport_stub
+  mkdir -p "${BATS_TEST_TMPDIR}/outside/rootfs"
+  SWAP_PATH="${L4T}/rootfs" SWAP_TARGET="${BATS_TEST_TMPDIR}/outside/rootfs" run nfs_export_on "${L4T}"
+  assert_failure 1
+  run grep -c "^exportfs -o .*:${L4T}/rootfs\$" "${EXPORTFS_LOG}"
+  assert_output 0
+  run grep -c '^exportfs -o' "${EXPORTFS_LOG}"
+  assert_output 2
+}
+
+@test "confinement (TOCTOU): a path that is swapped BEFORE its -u gets neither -u nor -o" {
+  # Swap images while rootfs is being unexported: images is already an
+  # outside symlink by the time its own -u would run.
+  _swap_on_unexport_stub
+  mkdir -p "${BATS_TEST_TMPDIR}/outside/images"
+  cat >"${TEST_BIN}/exportfs" <<EOF
+#!/usr/bin/env bash
+printf 'exportfs %s\n' "\$*" >>"\${EXPORTFS_LOG}"
+if [[ "\${1:-}" == -u && "\${2##*:}" == "${L4T}/rootfs" ]]; then
+  rm -rf -- "${L4T}/tools/kernel_flash/images" && ln -s "${BATS_TEST_TMPDIR}/outside/images" "${L4T}/tools/kernel_flash/images"
+fi
+exit 0
+EOF
+  chmod +x "${TEST_BIN}/exportfs"
+  run nfs_export_on "${L4T}"
+  assert_failure 1
+  run grep -c "${L4T}/tools/kernel_flash/images\$" "${EXPORTFS_LOG}"
+  assert_output 0                      # neither -u nor -o for images
+  run grep -c '^exportfs -o' "${EXPORTFS_LOG}"
+  assert_output 2                      # rootfs + tmp
+}
+
+@test "confinement (TOCTOU): the check right before -o does not get in the way of a normal tree — three -o calls" {
+  run nfs_export_on "${L4T}"
+  assert_success
+  run grep -c '^exportfs -o' "${EXPORTFS_LOG}"
+  assert_output 3
+  run cat "${EXPORTFS_LOG}"
+  assert_line --index 6 'exportfs -f'
+}
+
 @test "confinement: the export dir itself (or a symlinked export dir) canonicalises — a tree behind the /srv symlink is accepted" {
   # Tests and the real bridge alike: the export dir may be a symlink / bind
   # to data/jetson_l4t; a path inside it must still pass.
