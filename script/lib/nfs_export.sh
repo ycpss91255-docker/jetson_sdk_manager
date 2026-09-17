@@ -242,14 +242,17 @@ nfs_export_on() {
       return 1
     fi
   fi
-  # Confine every export target once more on the canonical filesystem, now
-  # that all three exist — the check right before the privileged call.
+  # Confinement sits IMMEDIATELY before each privileged call (review round
+  # 3): the checks above are not the line of defence, because between a
+  # check and the call the path can be swapped for a symlink pointing
+  # outside the export dir (each exportfs is a subprocess). So: check,
+  # -u; check again, rebuild the spec from the re-checked path, -o. A
+  # path that fails a check is recorded and skipped — never exported.
   while IFS= read -r p; do
-    _nfs_assert_our_path "${p}" || return 1
-  done < <(nfs_export_paths "${l4t}")
-  while IFS= read -r p; do
+    if ! _nfs_assert_our_path "${p}"; then failed="${failed} ${p}"; continue; fi
+    _nfs_exportfs -u "$(nfs_export_spec "${p}")" >/dev/null 2>&1 || true
+    if ! _nfs_assert_our_path "${p}"; then failed="${failed} ${p}"; continue; fi
     spec="$(nfs_export_spec "${p}")"
-    _nfs_exportfs -u "${spec}" >/dev/null 2>&1 || true
     _nfs_exportfs -o "${NFS_EXPORT_OPTS}" "${spec}" || failed="${failed} ${p}"
   done < <(nfs_export_paths "${l4t}")
   if ! _nfs_exportfs -f; then
