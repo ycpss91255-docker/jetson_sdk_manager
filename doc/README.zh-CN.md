@@ -7,7 +7,7 @@
 **[English](../README.md)** | **[繁體中文](README.zh-TW.md)** | **[简体中文](README.zh-CN.md)** | **[日本語](README.ja.md)**
 
 
-> **⚠ 本文档对应的是旧版流程。** 新的入口是 `./jetson status` → **先进入 REC** → `./jetson prepare` → `./jetson flash`(见 [README.md](../README.md) / [繁體中文](README.zh-TW.md),含 REC 模式图解)。注意:与下文旧说明不同,**prepare 也需要板子处于 recovery**(最后一步通过 USB 读取板子的 BOARDID/FAB/BOARDSKU/BOARDREV;自行 export 这四个变量的用户可用 `./jetson prepare --no-board`);`./jetson all` 的顺序是 wait-rec → prepare → flash。遇到 `timeout in USB write` 时先完整断电重新进入 recovery 再重跑。下面的手动命令仍然有效,`./jetson` 只是把它们串起来。
+> **⚠ 本文档对应的是旧版流程。** 新的入口是 `./jetson status` → **先进入 REC** → `./jetson prepare` → `./jetson flash`(见 [README.md](../README.md) / [繁體中文](README.zh-TW.md),含 REC 模式图解)。注意:与下文旧说明不同,**prepare 也需要板子处于 recovery**(最后一步通过 USB 读取板子的 BOARDID/FAB/BOARDSKU/BOARDREV;自行 export 这四个变量的用户可用 `./jetson prepare --no-board`);`./jetson all` 的顺序是 wait-rec → prepare → flash。遇到 `timeout in USB write` 时先完整断电重新进入 recovery 再重跑。下面的手动命令仍然有效,`./jetson` 只是把它们串起来。另外(#101,本文未展开,见英文版 Prerequisites / TROUBLESHOOTING):若 host 装有 `nfs-kernel-server`(有 `exportfs`),`./jetson flash` 与 `host_setup.sh` 会从 host 把 L4T tree 的 `rootfs`、`tools/kernel_flash/images`、`tools/kernel_flash/tmp` 以 NVIDIA 的 `rw,…` 选项 export 给 `fc00:1:1::/48`——否则 host 自己的 `rpc.mountd` 会用空的 `/etc/exports` 回答内核,板子在 `SSH ready` 之后 `mount.nfs` 会一直卡住;`host_teardown.sh` 会 unexport。
 
 ---
 
@@ -454,7 +454,7 @@ make run -- -t flash
 
 ### Flash 烧到一半卡住 / 「Flashing - 99%」 / `mount.nfs: No such file or directory`
 
-容器内 flash（任一路径）烧到一半卡住，几乎总是 **host 的 NetworkManager** 对 Jetson 的 USB gadget 接口做 DHCP 探测、超时、并在传输途中移除地址 —— 这是 [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48) 追查到的根因。烧录前跑 `./script/nm_flash_guard.sh auto`（它会把接口标记为 unmanaged，并在板子开机后重新启用 NM）。若你看到的是 `mount.nfs: ... No such file or directory`，则是缺了 host 的 `/srv/jetson_l4t` 桥接 —— `./script/host_setup.sh` 会设好它（步骤 5/5）。
+容器内 flash（任一路径）烧到一半卡住，几乎总是 **host 的 NetworkManager** 对 Jetson 的 USB gadget 接口做 DHCP 探测、超时、并在传输途中移除地址 —— 这是 [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48) 追查到的根因。烧录前跑 `./script/nm_flash_guard.sh auto`（它会把接口标记为 unmanaged，并在板子开机后重新启用 NM）。若你看到的是 `mount.nfs: ... No such file or directory`，则是缺了 host 的 `/srv/jetson_l4t` 桥接 —— `./script/host_setup.sh` 会设好它（步骤 5/7）。
 
 ### SDK Manager：「Device mode forwarding host setup failed」
 

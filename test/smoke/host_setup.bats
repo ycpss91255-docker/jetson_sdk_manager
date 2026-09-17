@@ -402,3 +402,108 @@ EOF
   run cat "${MOUNT_LOG}"
   assert_line --index 0 --partial "--bind ${BATS_TEST_TMPDIR}/cwd/rel/store "
 }
+
+# ── step 6: host NFS export (#101) ───────────────────────────────────
+
+# exportfs in the lib's test mode (NFS_EXPORT_TEST_ROOT=<tmpdir> →
+# <tmpdir>/bin/exportfs, run without sudo; the export dir is
+# <tmpdir>/srv/jetson_l4t = L4T_EXPORT_DIR above), logging argv.
+_stub_exportfs() {
+  EXPORTFS_LOG="${BATS_TEST_TMPDIR}/exportfs.log"; export EXPORTFS_LOG
+  export NFS_EXPORT_TEST_ROOT="${BATS_TEST_TMPDIR}"
+  mkdir -p "${BATS_TEST_TMPDIR}/bin"
+  cat >"${BATS_TEST_TMPDIR}/bin/exportfs" <<'EOF'
+#!/usr/bin/env bash
+printf 'exportfs %s\n' "$*" >>"${EXPORTFS_LOG}"
+EOF
+  chmod +x "${BATS_TEST_TMPDIR}/bin/exportfs"
+}
+
+# A prepared tree under data/ plus the /srv bridge as a symlink (the bind is
+# stubbed), so the HOST-namespace export paths exist. Echoes the host path.
+_prepared_tree() {
+  local rel="JetPack_6.2.2_Linux_jetson-agx-orin-devkit/Linux_for_Tegra"
+  mkdir -p "${L4T_EXPORT_SRC}/${rel}/rootfs" "${L4T_EXPORT_SRC}/${rel}/tools/kernel_flash/images"
+  printf 'jetpack_version: "6.2.2"\nphases: [bsp, rootfs, binaries, user, images]\n' >"${L4T_EXPORT_SRC}/${rel}/.prepared.yaml"
+  mkdir -p "$(dirname "${L4T_EXPORT_DIR}")"
+  ln -s "${L4T_EXPORT_SRC}" "${L4T_EXPORT_DIR}"
+  printf '%s/%s' "${L4T_EXPORT_DIR}" "${rel}"
+}
+
+@test "host_setup exports the prepared L4T tree from the host NFS server after the /srv bridge (#101)" {
+  _stub_exportfs
+  local l4t
+  l4t="$(_prepared_tree)"
+  run "${HOST_SETUP}"
+  assert_success
+  # The bridge (step 5) comes before the export (step 6): the export paths
+  # are the host-namespace ones the bridge provides.
+  [[ "${output#*Bridging}" == *"exported to fc00:1:1::/48"* ]]
+  run cat "${EXPORTFS_LOG}"
+  assert_line --partial "exportfs -o rw,nohide,insecure,no_subtree_check,async,no_root_squash [fc00:1:1::/48]:${l4t}/rootfs"
+  assert_line --partial "[fc00:1:1::/48]:${l4t}/tools/kernel_flash/images"
+  assert_line --partial "[fc00:1:1::/48]:${l4t}/tools/kernel_flash/tmp"
+  assert_line 'exportfs -f'
+}
+
+@test "host_setup skips the export, not fatally, when the tree is prepared but images/ is gone (clean.sh build, then ./jetson prepare)" {
+  _stub_exportfs
+  local l4t
+  l4t="$(_prepared_tree)"
+  rm -rf "${l4t}/tools/kernel_flash/images"
+  run "${HOST_SETUP}"
+  assert_success                      # ./jetson prepare runs this BEFORE rebuilding images
+  assert_output --partial 'incomplete'
+  refute_output --partial 'Error ['
+  [[ ! -e "${EXPORTFS_LOG}" ]]
+}
+
+@test "host_setup says so and skips the export when no L4T tree is prepared yet" {
+  _stub_exportfs
+  run "${HOST_SETUP}"
+  assert_success
+  assert_output --partial 'not prepared'
+  assert_output --partial 'flash'
+  [[ ! -e "${EXPORTFS_LOG}" ]]
+}
+
+@test "host_setup with two prepared trees exports nothing, says how to resolve it, and carries on" {
+  _stub_exportfs
+  local l4t rel2="JetPack_6.2.2_Linux_jetson-orin-nano-devkit-super/Linux_for_Tegra"
+  l4t="$(_prepared_tree)"
+  mkdir -p "${L4T_EXPORT_SRC}/${rel2}/rootfs" "${L4T_EXPORT_SRC}/${rel2}/tools/kernel_flash/images"
+  : >"${L4T_EXPORT_SRC}/${rel2}/.prepared.yaml"
+  run "${HOST_SETUP}"
+  assert_success
+  assert_output --partial 'more than one prepared L4T tree'
+  assert_output --partial 'clean.sh l4t'
+  assert_output --partial '[host-setup] Done'   # the run continued past step 6
+  [[ ! -e "${EXPORTFS_LOG}" ]]
+}
+
+@test "host_setup outside test mode never runs an EXPORTFS_BIN from the environment (review round 1)" {
+  local evil="${BATS_TEST_TMPDIR}/evil"
+  printf '#!/usr/bin/env bash\ntouch "%s.ran"\n' "${evil}" >"${evil}"; chmod +x "${evil}"
+  _prepared_tree >/dev/null
+  # sudo stub that records and runs nothing (mount / tee are logged too).
+  SUDO_LOG="${BATS_TEST_TMPDIR}/sudo.log"; export SUDO_LOG
+  cat >"${STUB_BIN}/sudo" <<'EOF'
+#!/usr/bin/env bash
+printf 'sudo %s\n' "$*" >>"${SUDO_LOG}"
+exit 0
+EOF
+  chmod +x "${STUB_BIN}/sudo"
+  EXPORTFS_BIN="${evil}" run "${HOST_SETUP}"
+  assert_success
+  refute_output --partial '[test mode]'
+  [[ ! -e "${evil}.ran" ]]
+  run grep -c "^sudo ${evil}" "${SUDO_LOG}"
+  assert_output 0
+  # Production resolves the tree under the literal /srv/jetson_l4t, where
+  # nothing from this tmp repo exists — the step reports and skips, and
+  # any exportfs that did run is the literal binary on a /srv path.
+  if grep -q '^sudo /usr/sbin/exportfs' "${SUDO_LOG}"; then
+    run grep '^sudo /usr/sbin/exportfs' "${SUDO_LOG}"
+    refute_output --partial "${BATS_TEST_TMPDIR}"
+  fi
+}

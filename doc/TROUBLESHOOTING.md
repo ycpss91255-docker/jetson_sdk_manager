@@ -105,7 +105,42 @@ Persist across reboots with `echo nfsd | sudo tee /etc/modules-load.d/nfsd.conf`
 
 ### Flash stalls mid-transfer / "Flashing - 99%" / `mount.nfs: No such file or directory`
 
-The in-container flash (either path) stalling partway is almost always the **host's NetworkManager** DHCP-probing the Jetson's USB gadget interface, timing out, and removing the address mid-transfer — the root cause traced in [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48). Run `./script/nm_flash_guard.sh auto` before flashing (it marks the interface unmanaged, then re-enables NM when the board boots). If instead you see `mount.nfs: ... No such file or directory`, the host `/srv/jetson_l4t` bridge is missing — `./script/host_setup.sh` sets it up (step 5/5).
+The in-container flash (either path) stalling partway is almost always the **host's NetworkManager** DHCP-probing the Jetson's USB gadget interface, timing out, and removing the address mid-transfer — the root cause traced in [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48). Run `./script/nm_flash_guard.sh auto` before flashing (it marks the interface unmanaged, then re-enables NM when the board boots). If instead you see `mount.nfs: ... No such file or directory`, the host `/srv/jetson_l4t` bridge is missing — `./script/host_setup.sh` sets it up (step 5/7).
+
+### "SSH ready", then nothing / `Either the device cannot mount the NFS server on the host or a flash command has failed`
+
+The board booted the initrd, the host reached it over the `fc00:1:1::/48` link (`SSH ready`), and then the log stays silent for minutes before:
+
+```
+Error: Either the device cannot mount the NFS server on the host or a flash command has failed
+```
+
+**Cause** ([#101](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/101), AGX Orin 64 GB, 2026-09-16): the **host runs its own `nfs-kernel-server`** (`rpc.mountd`, `nfsdcld`, `rpcbind` from boot). The flash container (`--network host`) runs `exportfs` + its own `rpc.mountd`, but the kernel `nfsd` is shared, and its export upcalls got answered by the **host's** mountd using the host's empty `/etc/exports` → the board's `mount.nfs [fc00:1:1::1]:…/rootfs /mnt` hangs forever. Diagnose on the host while it hangs:
+
+```bash
+grep -E '^rc|^net' /proc/net/rpc/nfsd     # rc stuck at "rc 0 0 2" and the tcpconn count climbing = nobody answers
+pgrep -a rpc.mountd                        # two of them: the host's (PID from boot) + the container's
+exportfs -s                                # host export table: the L4T tree is not in it
+```
+
+**Fix**: export the three directories **on the host**, to the initrd's client range, with NVIDIA's permission string (`PERMISSION_STR` in `tools/kernel_flash/l4t_network_flash.func`). `./jetson flash` does exactly this before every flash (and `host_setup.sh` step 6/7 does it when a tree is prepared); by hand:
+
+```bash
+perm=rw,nohide,insecure,no_subtree_check,async,no_root_squash
+L4T=/srv/jetson_l4t/JetPack_6.2.2_Linux_jetson-agx-orin-devkit/Linux_for_Tegra   # host-namespace path (the /srv bridge)
+for d in "$L4T/rootfs" "$L4T/tools/kernel_flash/images" "$L4T/tools/kernel_flash/tmp"; do
+  sudo exportfs -u "[fc00:1:1::/48]:$d" 2>/dev/null   # drop a previous (possibly stale) export first
+  sudo exportfs -o "$perm" "[fc00:1:1::/48]:$d"
+done
+sudo exportfs -f                                        # flush the kernel export cache
+```
+
+`rc` jumps immediately and the flash continues. Two caveats learned the hard way:
+
+- The export must be **`rw`**. The board mounts `rootfs` on `/mnt` and chroots into it; a default (`ro`) export dies with `mktemp: … Read-only file system`.
+- **`mount.nfs: Stale file handle`** after a re-prepare (`clean.sh build`, then `./jetson prepare`): `tools/kernel_flash/images` was regenerated, so the old export points at a dead inode. `exportfs -u` + re-export + `exportfs -f` (the loop above) fixes it — which is why `./jetson flash` re-runs the export every time instead of trusting `host_setup.sh`'s.
+
+`./jetson status` shows ⚠ *host rpc.mountd running but not exporting the L4T tree as the board needs it (…)* for this exact state — it reads `/var/lib/nfs/etab` (no sudo) and checks each of the three paths for the right client **and** `rw`. The export is made whenever the host *has* `exportfs`, not only while its mountd is running (harmless otherwise, and the daemon may start later in the boot). `host_teardown.sh` unexports every entry under `/srv/jetson_l4t`, even when `clean.sh l4t` already removed the marker. Everything handed to `sudo` is a literal (`/usr/sbin/exportfs`, `/srv/jetson_l4t/…`, the client and the options) — no environment variable changes what runs as root — and every path is confined on the canonical filesystem (a `..` hop or a symlink under `/srv/jetson_l4t` pointing outside is refused, on the unexport side too). No `nfs-kernel-server` on the host at all? Then there is no competing mountd and the container's own export is enough — nothing to do.
 
 ### Flash waits in `Waiting for target to boot-up...` while dmesg loops `Cannot enable. Maybe the USB cable is bad?`
 

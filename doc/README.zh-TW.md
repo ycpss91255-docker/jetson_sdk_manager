@@ -98,7 +98,8 @@ host 用完了?`./jetson teardown` 在同一次開機內還原 kernel / mount �
 - **x86_64 Linux** host(燒錄階段不支援 WSL、macOS 上的 VM)、**Docker ≥ 20.10** 且不用 `sudo`(`docker run --rm hello-world`;不行就 `sudo usermod -aG docker "$USER"` 後重新登入)、`make`、`lsusb`。
 - **約 20 GB 可用空間**放 BSP、rootfs 與產生的映像;其中約 4 GB 是一次性下載。
 - **`./data/jetson_l4t/` 必須是 ext4 / xfs / btrfs**——`apply_binaries.sh` 會寫 setuid 與 root 擁有的檔案,NTFS / exFAT / FAT 會靜默丟掉,燒出來的 Jetson `sudo` 會壞。你不必搬 repo:在這類 checkout 上 `./jetson prepare`(透過 `host_setup.sh`)會在 **repo 內**建一個 sparse ext4 映像檔(`data/jetson_l4t.img`,邏輯大小 `L4T_STORE_SIZE=40G`)並 loop-mount 到 `data/jetson_l4t/`。需要 `e2fsprogs` + `util-linux`(`mkfs.ext4`、`losetup`)。想改用另一顆 ext4 碟上的目錄?`L4T_STORE_DIR=/path/on/ext4 ./jetson prepare`。loop 路徑比原生 ext4 慢,主要在 rootfs 解壓時。
-- **每次開機**:`./jetson prepare` 會重跑 `host_setup.sh`(QEMU binfmt、`nfsd`、USB autosuspend / buffer、`/srv/jetson_l4t` 橋接、data store 掛載)。重開機後全部歸零;`./jetson status` 會告訴你什麼時候需要再跑。
+- **每次開機**:`./jetson prepare` 會重跑 `host_setup.sh`(QEMU binfmt、`nfsd`、USB autosuspend / buffer、`/srv/jetson_l4t` 橋接、data store 掛載、下面的 host NFS export)。重開機後全部歸零;`./jetson status` 會告訴你什麼時候需要再跑。
+- **host 裝有 `nfs-kernel-server`**(存在 `/usr/sbin/exportfs`):host 自己的 `rpc.mountd` 在跑時,回答共用 kernel `nfsd` 的是它,拿的是 host 那份(空的)`/etc/exports` 而不是 flash 容器的 export,板子的 `mount.nfs` 就在 `SSH ready` 之後一直卡住([#101](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/101))。所以**只要 host 有 `exportfs`**——不只在它的 mountd 剛好在跑時——`./jetson flash`(以及 `host_setup.sh`,在 tree 已 prepare 時)也會從 host 把 `rootfs`、`tools/kernel_flash/images`、`tools/kernel_flash/tmp` export 給 `fc00:1:1::/48`,選項用 NVIDIA 的 `rw,nohide,insecure,no_subtree_check,async,no_root_squash`;每次燒錄前都重做一次,重新 prepare 過的 tree 才不會拿到 stale file handle;`host_teardown.sh` 會 unexport(`/srv/jetson_l4t` 底下全部)。host 的 `rpc.mountd` 在跑而 export 缺少、給錯 client 或不是 `rw` 時,`./jetson status` 會顯示 ⚠。路徑、執行檔與選項都是寫死的常數——交給 sudo 的東西不會來自你的環境變數。host 沒裝 `nfs-kernel-server`?什麼都不變——容器自己的 NFS server 就夠了。
 - **NetworkManager host**(多數桌機/筆電):不擋的話 NM 會在燒到一半時把 USB 連線拆掉。`./jetson flash` 會幫你跑 `nm_flash_guard.sh auto`;只有確定 host 沒跑 NM 才略過。
 - **USB 3 連接埠**:燒錄用的 initrd 只需要 USB 2,但它的 gadget 也會嘗試建立 SuperSpeed 連線;某些 host 上這條連線永遠訓練不起來,每隔幾秒的重試會把正常的 USB 2 連線一起拆掉(`Waiting for target to boot-up...` 直到逾時)。`./jetson flash` 會幫你跑 `usb_ss_guard.sh auto`:停用 Jetson 那個接頭的 SuperSpeed 半邊(sysfs、開機期),由 root watcher 在板子開機後恢復;若 watcher 起不來,`./script/usb_ss_guard.sh enable`、`./jetson teardown` 或重開機都會還原。細節與手動作法:[doc/TROUBLESHOOTING.md](TROUBLESHOOTING.md#flash-waits-in-waiting-for-target-to-boot-up-while-dmesg-loops-cannot-enable-maybe-the-usb-cable-is-bad)。
 
@@ -187,6 +188,7 @@ cd .. && rm -rf jetson_sdk_manager
 - `RPC: Program not registered` / *NFS server is not running* / `Error 114`(flash 一開始)
 - 燒到一半卡住 / 「Flashing – 99 %」/ `mount.nfs: No such file or directory`(NetworkManager)
 - flash 停在 *Waiting for target to boot-up...*,`dmesg` 不斷出現 *Cannot enable. Maybe the USB cable is bad?*(接頭的 SuperSpeed 半邊)
+- *SSH ready* 之後沒動靜 / *Either the device cannot mount the NFS server on the host*(host 自己有 `rpc.mountd`)· `mount.nfs: Stale file handle` · *Read-only file system*
 - `ERROR: might be timeout in USB write` / `Return value 3`
 - `Error opening /dev/sda: No medium found`(USB 讀卡機的 microSD)· APP partition 卡住
 - SDK Manager:*Device mode forwarding host setup failed* · GUI 元件安裝卡住

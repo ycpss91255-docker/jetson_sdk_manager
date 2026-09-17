@@ -8,11 +8,11 @@ How the repo is put together. For *using* it, see the [README](../README.md).
 
 | `./jetson …` | Runs |
 |---|---|
-| `status` | `lib/status.sh` checks + `lsusb -d 0955:` (same PID list as `script/probe.sh`) |
+| `status` | `lib/status.sh` checks + `lsusb -d 0955:` (same PID list as `script/probe.sh`) + `lib/nfs_export.sh::nfs_export_status` (host `rpc.mountd` vs. the L4T exports) |
 | `prepare` | preflight (a Jetson in recovery, unless `--no-board`) → `sudo -v` → `./script/host_setup.sh` → `./script/init_data_dirs.sh` → `make run -- -t prepare` (auto-builds the image) |
 | `wait-rec` | polls `lsusb` for a recovery PID |
-| `flash` | preflight (recovery PID, `images` phase in `.prepared.yaml`) → `./script/nm_flash_guard.sh auto` → `./script/usb_ss_guard.sh auto` → `make run -- -t flash` |
-| `teardown` | `./script/host_teardown.sh` (incl. `nm_flash_guard.sh enable` + `usb_ss_guard.sh enable`) |
+| `flash` | preflight (recovery PID, `images` phase in `.prepared.yaml`) → `sudo -v` → `lib/nfs_export.sh::nfs_export_on` (host NFS export of the L4T tree, re-done every flash — [#101](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/101)) → `./script/nm_flash_guard.sh auto` → `./script/usb_ss_guard.sh auto` → `make run -- -t flash` |
+| `teardown` | `./script/host_teardown.sh` (incl. the host NFS unexport, `nm_flash_guard.sh enable` + `usb_ss_guard.sh enable`) |
 | `purge` | `./script/clean.sh purge [--keep-downloads]` |
 
 Other useful manual commands:
@@ -35,6 +35,7 @@ Everything here touches the host kernel or Docker and cannot be done from inside
 3. **USB autosuspend off** — `/sys/module/usbcore/parameters/autosuspend = -1`.
 4. **usbfs buffer** — `/sys/module/usbcore/parameters/usbfs_memory_mb = 2048`; stops `tegrarcm_v2` bulk writes stalling.
 5. **`/srv/jetson_l4t` bridge** — bind-mount `data/jetson_l4t` to the same path the container sees, because the kernel `nfsd` resolves the export in the *host* mount namespace.
+6. **Host NFS export** ([#101](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/101)) — when the host has `exportfs` (nfs-kernel-server), export the prepared tree's `rootfs`, `tools/kernel_flash/images` and `tools/kernel_flash/tmp` (host paths under the bridge) to `fc00:1:1::/48` with NVIDIA's `rw,nohide,insecure,no_subtree_check,async,no_root_squash`, then `exportfs -f`. Otherwise the *host's* `rpc.mountd` answers the shared kernel `nfsd` with an empty `/etc/exports` and the board's `mount.nfs` hangs. Skipped with a message when no tree is prepared yet or `rootfs` / `images` are missing (prepare runs this script first, also after `clean.sh build`); `./jetson flash` repeats it before every flash so a regenerated `images/` never serves a stale file handle. Done whenever the host *has* `exportfs`, mountd running or not. No `exportfs`: no-op, the container's own server suffices. Trust model: production uses only literals (`/usr/sbin/exportfs`, `/var/lib/nfs/etab`, `/srv/jetson_l4t`, client, options) and confines every path handed to `sudo` on the canonical filesystem (`readlink -f`, no `..`, symlink escapes refused — export and unexport side alike, including entries read from `/var/lib/nfs/etab`) under `/srv/jetson_l4t`; the bats suites use `NFS_EXPORT_TEST_ROOT=<dir>` (exportfs = `<dir>/bin/exportfs`, etab = `<dir>/etab`, export dir = `<dir>/srv/jetson_l4t`, no sudo, prints `[test mode]`). `lib/nfs_export.sh`; `host_teardown.sh` unexports first — every table entry under `/srv/jetson_l4t` (an exported directory pins the bridge mount).
 
 ### `nm_flash_guard.sh`
 
@@ -164,10 +165,10 @@ jetson_sdk_manager/
 │   ├── clean.sh                 # Volume cleanup targets
 │   ├── gui-entrypoint.sh        # SDK Manager GUI launcher + best-effort banner
 │   ├── jetson.sh                # ./jetson dispatcher
-│   ├── lib/                     # yaml / download / volume / store / status / usb / errors helpers
+│   ├── lib/                     # yaml / download / volume / store / status / nfs_export / usb / errors helpers
 │   ├── nm_flash_guard.sh        # Flash-scoped NetworkManager guard (#48)
 │   ├── usb_ss_guard.sh          # Flash-scoped SuperSpeed-port guard (#100)
-│   ├── host_setup.sh            # One-shot per-boot host prereqs (store/qemu/nfsd/USB)
+│   ├── host_setup.sh            # One-shot per-boot host prereqs (store/qemu/nfsd/USB/NFS export)
 │   ├── host_teardown.sh         # Reverse host_setup.sh in the same boot
 │   ├── init_data_dirs.sh        # First-time data/ mkdir as non-root
 │   ├── entrypoint.sh            # Container entrypoint (logging tee)

@@ -9,7 +9,7 @@
 > この日本語訳は英語版から翻訳したものです。内容に差異がある場合は英語版（[README.md](../README.md)）が正本です。
 
 
-> **⚠ この文書は旧手順のままです。** 新しい入口は `./jetson status` → **先に REC モードへ** → `./jetson prepare` → `./jetson flash` です([README.md](../README.md) / [繁體中文](README.zh-TW.md) に REC モードの図解あり)。注意:以下の旧説明と異なり、**prepare にもボードが recovery 状態である必要があります**(最終ステップで USB 経由に BOARDID/FAB/BOARDSKU/BOARDREV を読み取るため。これらを自分で export する場合は `./jetson prepare --no-board`)。`./jetson all` の順序は wait-rec → prepare → flash です。`timeout in USB write` が出たら、まず完全に電源を切って recovery に入れ直してから再実行してください。以下の手動コマンドも引き続き有効で、`./jetson` はそれらを順に呼ぶだけです。
+> **⚠ この文書は旧手順のままです。** 新しい入口は `./jetson status` → **先に REC モードへ** → `./jetson prepare` → `./jetson flash` です([README.md](../README.md) / [繁體中文](README.zh-TW.md) に REC モードの図解あり)。注意:以下の旧説明と異なり、**prepare にもボードが recovery 状態である必要があります**(最終ステップで USB 経由に BOARDID/FAB/BOARDSKU/BOARDREV を読み取るため。これらを自分で export する場合は `./jetson prepare --no-board`)。`./jetson all` の順序は wait-rec → prepare → flash です。`timeout in USB write` が出たら、まず完全に電源を切って recovery に入れ直してから再実行してください。以下の手動コマンドも引き続き有効で、`./jetson` はそれらを順に呼ぶだけです。また（#101、本書では要約のみ。詳細は英語版 Prerequisites / TROUBLESHOOTING）：host に `nfs-kernel-server`（`exportfs`）がある場合、`./jetson flash` と `host_setup.sh` は L4T tree の `rootfs`・`tools/kernel_flash/images`・`tools/kernel_flash/tmp` を NVIDIA の `rw,…` オプションで `fc00:1:1::/48` に host 側から export します — さもないと host 自身の `rpc.mountd` が空の `/etc/exports` でカーネルに応答し、ボードの `mount.nfs` が `SSH ready` の後で永久に止まります。`host_teardown.sh` が unexport します。
 
 ---
 
@@ -456,7 +456,7 @@ make run -- -t flash
 
 ### フラッシュが転送途中で停止 / 「Flashing - 99%」 / `mount.nfs: No such file or directory`
 
-コンテナ内フラッシュ（どちらの経路でも）が途中で停止するのは、ほぼ常に **host の NetworkManager** が Jetson の USB gadget インターフェースを DHCP プローブし、タイムアウトして、転送の途中でアドレスを削除していることが原因です — [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48) で突き止めた根本原因です。フラッシュ前に `./script/nm_flash_guard.sh auto` を実行してください（インターフェースを unmanaged にマークし、ボード起動時に NM を再有効化します）。代わりに `mount.nfs: ... No such file or directory` が出る場合は、host の `/srv/jetson_l4t` ブリッジが欠けています — `./script/host_setup.sh` がそれをセットアップします（step 5/5）。
+コンテナ内フラッシュ（どちらの経路でも）が途中で停止するのは、ほぼ常に **host の NetworkManager** が Jetson の USB gadget インターフェースを DHCP プローブし、タイムアウトして、転送の途中でアドレスを削除していることが原因です — [#48](https://github.com/ycpss91255-docker/jetson_sdk_manager/issues/48) で突き止めた根本原因です。フラッシュ前に `./script/nm_flash_guard.sh auto` を実行してください（インターフェースを unmanaged にマークし、ボード起動時に NM を再有効化します）。代わりに `mount.nfs: ... No such file or directory` が出る場合は、host の `/srv/jetson_l4t` ブリッジが欠けています — `./script/host_setup.sh` がそれをセットアップします（step 5/7）。
 
 ### SDK Manager：「Device mode forwarding host setup failed」
 
