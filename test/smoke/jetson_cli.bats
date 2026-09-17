@@ -151,7 +151,7 @@ EOF
 @test "flash order is nm_flash_guard auto → usb_ss_guard auto → make run -t flash (#100)" {
   LSUSB_OUT="${REC}" run "${JETSON}" flash
   assert_success
-  run grep -vE '^(lsusb|sudo)' "${CALLS}"
+  run grep -vE '^(lsusb|sudo|exportfs)' "${CALLS}"
   assert_line --index 0 'nm_flash_guard.sh auto'
   assert_line --index 1 'usb_ss_guard.sh auto'
   assert_line --index 2 'make run -- -t flash'
@@ -426,7 +426,8 @@ EOF
   assert_line --index 6 --partial "[fc00:1:1::/48]:${L4T_HOST_TREE}/tools/kernel_flash/tmp"
   assert_line --index 7 'exportfs -f'
   assert_line --index 8 'nm_flash_guard.sh auto'
-  assert_line --index 9 'make run -- -t flash'
+  assert_line --index 9 'usb_ss_guard.sh auto'
+  assert_line --index 10 'make run -- -t flash'
 }
 
 @test "flash stops before the NM guard when the host export fails (rootfs missing behind the bridge)" {

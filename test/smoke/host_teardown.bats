@@ -167,7 +167,7 @@ EOF
 @test "host_teardown re-enables the connector's SuperSpeed half via usb_ss_guard.sh enable (which stops its own watcher)" {
   run "${HOST_TEARDOWN}"
   assert_success
-  assert_output --partial '6/6'
+  assert_output --partial '7/7'
   run cat "${USB_SS_GUARD_LOG}"
   assert_output 'enable'
 }
