@@ -155,10 +155,16 @@ EOF
   assert_success
   run cat "${ARGV_LOG}"
   assert_output --partial '--no-flash'
-  assert_output --partial '--external-only'
+  # No --external-only: images for BOTH the internal QSPI boot chain
+  # (-p flash_t234_qspi.xml) and the external rootfs must be generated,
+  # because flash.sh flashes both. With --external-only the on-device
+  # flash dies with '/mnt/internal/flash.idx is not found' (HITL, AGX Orin
+  # NVMe, 2026-09-16).
+  refute_output --partial '--external-only'
   assert_output --partial '--external-device'
   assert_output --partial 'nvme0n1p1'
   assert_output --partial 'flash_l4t_external.xml'
+  assert_output --partial 'flash_t234_qspi.xml'
   # Exact-line match: 'external' is the positional mode arg, not a substring
   # of some flag — guards against a regression that drops the positional.
   run grep -Fxq external "${ARGV_LOG}"
@@ -329,7 +335,7 @@ EOF
   assert_success
   # images phase was dropped and regenerated under the external dispatch...
   run cat "${ARGV_LOG}"
-  assert_output --partial '--external-only'
+  assert_output --partial '--external-device'
   # ...and the marker now records the new mode.
   run yq -r '.storage_mode' "${L4T_DIR}/.prepared.yaml"
   assert_output 'external'
@@ -396,4 +402,111 @@ EOF
   assert_output --partial 'addresses=192.168.1.50/24'
   assert_output --partial 'gateway=192.168.1.1'
   assert_output --partial 'dns=8.8.8.8;1.1.1.1;'
+}
+
+# ── initrd boot timeout (#100) ───────────────────────────────────────
+# l4t_initrd_flash_internal.sh waits `maxcount=${timeout:-120}` seconds for
+# the board to come back as the initrd flash device; NVIDIA's `-t` is dead
+# code (not in getopts), so flash.sh patches the literal like #47 does for
+# the eMMC discard. An AGX Orin 64 GB took ~3.5 min on real hardware.
+
+_write_initrd_internal() {
+  cat >"${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash_internal.sh" <<'EOF'
+#!/bin/bash
+wait_for_booting() {
+	maxcount=${timeout:-120}
+	count=0
+}
+EOF
+}
+
+@test "flash patches the initrd boot wait to 600 s by default (no -t: NVIDIA ignores it)" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  _write_initrd_internal
+  yq -i '.phases |= (. + ["images"] | unique)' "${L4T_DIR}/.prepared.yaml"
+  run "${SCRIPT_DIR}/flash.sh"
+  assert_success
+  run grep -c 'maxcount=${timeout:-600}' "${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash_internal.sh"
+  assert_output '1'
+  run cat "${ARGV_LOG}"
+  refute_output --partial '-t '
+}
+
+@test "flash honours INITRD_FLASH_TIMEOUT for the patched wait and is idempotent" {
+  _write_jetson_yaml "storage:
+  device: nvme"
+  _write_initrd_internal
+  yq -i '.phases |= (. + ["images"] | unique)' "${L4T_DIR}/.prepared.yaml"
+  INITRD_FLASH_TIMEOUT=900 run "${SCRIPT_DIR}/flash.sh"
+  assert_success
+  INITRD_FLASH_TIMEOUT=900 run "${SCRIPT_DIR}/flash.sh"
+  assert_success
+  run grep -c 'maxcount=${timeout:-900}' "${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash_internal.sh"
+  assert_output '1'
+  run grep -c 'maxcount=' "${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash_internal.sh"
+  assert_output '1'
+}
+
+@test "flash rejects a non-numeric INITRD_FLASH_TIMEOUT before touching the board" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  _write_initrd_internal
+  yq -i '.phases |= (. + ["images"] | unique)' "${L4T_DIR}/.prepared.yaml"
+  INITRD_FLASH_TIMEOUT=soon run "${SCRIPT_DIR}/flash.sh"
+  assert_failure
+  assert_output --partial 'INITRD_FLASH_TIMEOUT'
+  [[ ! -s "${ARGV_LOG}" ]]
+}
+
+@test "flash refuses when NVIDIA's initrd script has no recognisable timeout line (never a silent no-op)" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  cat >"${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash_internal.sh" <<'EOF'
+#!/bin/bash
+wait_for_booting() {
+	maxcount=$(( timeout_s + 0 ))    # upstream changed the layout
+}
+EOF
+  yq -i '.phases |= (. + ["images"] | unique)' "${L4T_DIR}/.prepared.yaml"
+  run "${SCRIPT_DIR}/flash.sh"
+  assert_failure
+  assert_output --partial 'initrd boot wait'
+  [[ ! -s "${ARGV_LOG}" ]]
+}
+
+@test "flash refuses when the timeout patch did not land (sed succeeded but the file is unchanged)" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  _write_initrd_internal
+  yq -i '.phases |= (. + ["images"] | unique)' "${L4T_DIR}/.prepared.yaml"
+  # sed stub that exits 0 without touching the file
+  cat >"${STUB_BIN}/sed" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "${STUB_BIN}/sed"
+  run "${SCRIPT_DIR}/flash.sh"
+  assert_failure
+  assert_output --partial 'initrd boot wait'
+  [[ ! -s "${ARGV_LOG}" ]]
+}
+
+@test "flash refuses when the old timeout literal survives only in a comment (anchored match)" {
+  _write_jetson_yaml "storage:
+  device: emmc"
+  cat >"${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash_internal.sh" <<'EOF'
+#!/bin/bash
+wait_for_booting() {
+	# old: maxcount=${timeout:-120}
+	maxcount=$((timeout_s + 0))
+}
+EOF
+  yq -i '.phases |= (. + ["images"] | unique)' "${L4T_DIR}/.prepared.yaml"
+  run "${SCRIPT_DIR}/flash.sh"
+  assert_failure
+  assert_output --partial 'initrd boot wait'
+  [[ ! -s "${ARGV_LOG}" ]]
+  run grep -c 'maxcount=${timeout:-600}' "${L4T_DIR}/tools/kernel_flash/l4t_initrd_flash_internal.sh"
+  assert_output '0'
 }
